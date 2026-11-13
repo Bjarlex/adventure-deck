@@ -2,7 +2,7 @@
 
 A challenge card game for walking around Copenhagen with friends. Install it on your phone's home screen. It works offline, and it can share players, highscores and your own cards between your phones.
 
-Version 2. The original Koder version is in `v1-original/`.
+Version 2.1. The original Koder version is in `v1-original/`.
 
 ## What's in it
 
@@ -13,6 +13,7 @@ Version 2. The original Koder version is in `v1-original/`.
 - **Built-in tools**: timer, stopwatch, photo proof, Sound Bingo, random S-train/Metro station, random direction or "wind at your back" (live wind data), Urban Tarot, movie scenes, debate topics, random letter, coin, dice, and a random player picker.
 - **Card builder**: make your own cards, including cards tied to a spot from the list or to the GPS spot you're standing on. You can switch off default cards you don't like.
 - **Records**: an all-time leaderboard (points, wins, best game, average, chicken…), top-15 highscores, and a full game history with photos.
+- **Live games**: one phone starts a game and gets a 4-letter code, and the others join with it. Every phone shows the same card, turn and scores (updated every 2.5 s), and anyone can draw, pick winners, use the card's timer or bingo, and score. If two phones act at the same moment, only the first counts, and the other phone refreshes. When the game ends, every phone shows the podium. Needs crew sync plus the D1 database (step 4 below).
 
 ## Scoring
 
@@ -80,9 +81,25 @@ This lets every friend's phone share players, crew cards, switched-off cards and
 
 Sync happens automatically when the app opens, after a game ends and when cards or players change, and you can also press ⟳ Sync in Records.
 
-**How a game runs with sync:** one phone is the "deck phone" during a game and keeps score. When the game ends it's saved and synced, and everyone's phone shows the same records. Create players on one phone and sync before the others add them, otherwise you get two "Rafael"s.
+**How records sync:** when a game ends it's saved and synced, and everyone's phone shows the same records. Create players on one phone and sync before the others add them, otherwise you get two "Rafael"s.
 
 Free-plan limits: KV allows 1,000 writes a day. The Worker only writes when something actually changed, so a crew uses a handful a day.
+
+### 4. Optional: live games on every phone (about 3 minutes)
+
+Games in progress are stored in a small D1 database (Cloudflare's SQLite). Unlike KV, D1 shows every change to every phone immediately.
+
+1. **Storage & Databases → D1 SQL Database → Create**, named `adventure-deck-live`. The Worker creates the table itself; you don't need to run any SQL.
+2. Worker → **Bindings → Add binding → D1 database**: variable name `GAMES`, pick `adventure-deck-live`.
+3. Worker → **Edit code** → paste the latest `worker/worker.js` → **Deploy**.
+
+To play: when starting a game, keep **📡 Share this game live** on. The code appears at the top of the screen (tap it to show it big). Others go to **Play → Join a live game** and enter it. You can also put an ongoing game live from the **⋯** menu.
+
+- Every move is sent to the server first. If the connection drops, the move fails with a message and nothing is lost: tap again when you have signal. The 📡 pill turns red while a phone has no connection.
+- Photos stay on the phone that took them. GPS check-in uses the location of whoever presses it.
+- **⋯ → Stop following on this phone** leaves the game; it carries on for the others. **Abandon** ends it for everyone.
+- Live games untouched for 3 days are deleted automatically.
+- Free plan: 4 phones checking every 2.5 s for 2 hours is about 12,000 reads, well within D1's 5 million a day.
 
 ## Editing content
 

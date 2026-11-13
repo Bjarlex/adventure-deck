@@ -198,7 +198,11 @@ export function tickClock(el, st) {
   if (kind === 'timer') {
     const left = timerLeft(st);
     let finished = false;
-    if (st.endAt && left <= 0 && !st.done) { st.done = true; st.left = 0; st.endAt = null; beep(); finished = true; }
+    if (st.endAt && left <= 0 && !st.done) {
+      st.done = true; st.left = 0; st.endAt = null;
+      // Only beep if it just ran out. A live game can hand us a timer that ended a while ago.
+      if (left > -3000) { beep(); finished = true; }
+    }
     el.textContent = fmtClock(Math.max(0, timerLeft(st)));
     el.classList.toggle('clock-done', !!st.done);
     return finished;

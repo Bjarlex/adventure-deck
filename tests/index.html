@@ -200,6 +200,78 @@ await atest('worker drops malformed items', async () => {
   eq((await r.json()).cards.map((c) => c.id), ['c_good']);
 });
 
+// ── Worker: live games (D1) ──
+function mockD1() {
+  const rows = new Map();
+  const prepare = (sql) => {
+    const s = sql.trim(); let args = [];
+    const api = {
+      bind: (...a) => { args = a; return api; },
+      async run() {
+        if (s.startsWith('CREATE TABLE')) return { meta: { changes: 0 } };
+        if (s.startsWith('DELETE FROM live_games WHERE updated_at')) { let n = 0; for (const [k, r] of rows) if (r.updated_at < args[0]) { rows.delete(k); n++; } return { meta: { changes: n } }; }
+        if (s.startsWith('INSERT OR IGNORE')) { const [code, state, now] = args; if (rows.has(code)) return { meta: { changes: 0 } }; rows.set(code, { version: 1, state, updated_at: now }); return { meta: { changes: 1 } }; }
+        if (s.startsWith('UPDATE live_games')) { const [state, now, code, base] = args; const r = rows.get(code); if (!r || r.version !== base) return { meta: { changes: 0 } }; Object.assign(r, { state, version: r.version + 1, updated_at: now }); return { meta: { changes: 1 } }; }
+        if (s.startsWith('DELETE FROM live_games WHERE code')) { rows.delete(args[0]); return { meta: { changes: 1 } }; }
+        throw new Error('unexpected SQL: ' + s);
+      },
+      async first() { if (s.startsWith('SELECT')) { const r = rows.get(args[0]); return r ? { ...r } : null; } throw new Error('unexpected SQL: ' + s); },
+    };
+    return api;
+  };
+  return { prepare, rows };
+}
+const liveEnv = () => ({ ...env(), GAMES: mockD1() });
+const liveCall = (e, method, path, body) => worker.fetch(fakeReq('https://deck.example.workers.dev/api/live' + path,
+  { method, headers: { 'content-type': 'application/json', 'x-crew-key': 'secret-key', origin: 'https://friend.github.io' }, body: body ? JSON.stringify(body) : undefined }), e);
+
+await atest('live: explains a missing GAMES binding', async () => {
+  const r = await liveCall(env(), 'POST', '', { state: { a: 1 } });
+  eq(r.status, 500); ok((await r.json()).error.includes('GAMES'));
+});
+await atest('live: needs the crew key', async () => {
+  const r = await worker.fetch(fakeReq('https://x/api/live/ABCD', { headers: { 'x-crew-key': 'nope' } }), liveEnv());
+  eq(r.status, 401);
+});
+await atest('live: create, read, cheap poll, update, conflict, delete', async () => {
+  const e = liveEnv();
+  let r = await liveCall(e, 'POST', '', { state: { log: [], turn: 0 } });
+  eq(r.status, 201);
+  const { code, version } = await r.json();
+  ok(/^[A-HJ-NP-Z]{4}$/.test(code), `bad code ${code}`); eq(version, 1);
+  r = await liveCall(e, 'GET', `/${code.toLowerCase()}`);
+  eq(r.status, 200); eq((await r.json()).state, { log: [], turn: 0 });
+  r = await liveCall(e, 'GET', `/${code}?since=1`);
+  eq(r.status, 204, 'unchanged poll');
+  r = await liveCall(e, 'PUT', `/${code}`, { baseVersion: 1, state: { log: ['phone A'], turn: 1 } });
+  eq(r.status, 200); eq((await r.json()).version, 2);
+  r = await liveCall(e, 'PUT', `/${code}`, { baseVersion: 1, state: { log: ['phone B'], turn: 1 } });
+  eq(r.status, 409, 'stale write must be refused');
+  const conflict = await r.json();
+  eq([conflict.version, conflict.state.log], [2, ['phone A']]);
+  r = await liveCall(e, 'GET', `/${code}?since=1`);
+  eq((await r.json()).version, 2);
+  r = await liveCall(e, 'DELETE', `/${code}`);
+  eq(r.status, 200);
+  r = await liveCall(e, 'GET', `/${code}`);
+  eq(r.status, 404);
+});
+await atest('live: rejects bad input', async () => {
+  const e = liveEnv();
+  eq((await liveCall(e, 'POST', '', { nope: 1 })).status, 400);
+  const { code } = await (await liveCall(e, 'POST', '', { state: {} })).json();
+  eq((await liveCall(e, 'PUT', `/${code}`, { state: {} })).status, 400, 'missing baseVersion');
+  eq((await liveCall(e, 'PUT', `/${code}`, { baseVersion: 1, state: { big: 'x'.repeat(500000) } })).status, 413);
+  eq((await liveCall(e, 'GET', '/ZZZZ')).status, 404);
+  eq((await liveCall(e, 'GET', '/TOOLONG')).status, 404);
+});
+await atest('live: old games are cleaned up when a new one starts', async () => {
+  const e = liveEnv();
+  e.GAMES.rows.set('OLDY', { version: 3, state: '{}', updated_at: Date.now() - 4 * 86400000 });
+  await liveCall(e, 'POST', '', { state: {} });
+  ok(!e.GAMES.rows.has('OLDY'));
+});
+
 // ── Report ──
 const failed = results.filter((r) => !r[1]);
 document.getElementById('summary').innerHTML = failed.length ? `<span class="fail">${failed.length} of ${results.length} failed</span>` : `<span class="pass">All ${results.length} tests passed</span>`;

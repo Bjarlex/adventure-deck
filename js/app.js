@@ -9,10 +9,11 @@ import {
   playerStats, rejectCost, costAfterPenance, completionPoints, currentRound, isOver, winnersOf, awardsFor,
   leaderboard, topScores, distanceM, bearingDeg, compassLabel, fmtDistance,
 } from './rules.js';
-import { store, uid, sync, syncConfigured, photos, compressImage } from './store.js';
+import { store, uid, sync, syncConfigured, scheduleSync, photos, compressImage } from './store.js';
 import { renderTool, toolOp, tickClock, fmtClock } from './tools.js';
+import { live, normaliseCode } from './live.js';
 
-const VERSION = '2.0.0';
+const VERSION = '2.1.0';
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const EMOJIS = ['🦊', '🐻', '🐼', '🐸', '🦁', '🐯', '🐨', '🐵', '🦄', '🐙', '🦉', '🐧', '🐳', '🦖', '🐝', '🦀', '🐢', '🦩', '🐺', '🦦', '🐲', '🦔', '🐞', '🦜'];
@@ -23,7 +24,7 @@ const LENGTHS = [['open', 'Open'], ['r3', '3 rounds'], ['r5', '5 rounds'], ['r6'
 const ui = {
   tab: 'play',
   setup: {
-    playerIds: [], modeId: 'classic', length: 'open', useLocation: true,
+    playerIds: [], modeId: 'classic', length: 'open', useLocation: true, live: true,
     custom: { tags: {}, maxMins: 0, minDiff: 1, maxDiff: 4, freeVetoes: 1, penanceChance: 0.4, mult: 1, placeBias: 0 },
   },
   sheet: null,
@@ -35,6 +36,8 @@ const ui = {
   freeTools: {},
   freeTool: 'timer',
   lastGeoRender: 0,
+  liveOk: true,   // last contact with the live game server worked
+  joinCode: '',
 };
 
 // ── Card lookups ────────────────────────────────────────────────────────────
@@ -83,6 +86,7 @@ function renderView() {
   $('#view').innerHTML = views[ui.tab]();
   document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === ui.tab));
   afterRender($('#view'));
+  syncLivePolling();
 }
 
 function afterRender(root) {
@@ -146,6 +150,16 @@ function viewSetup() {
     <p class="muted">${allCards().length} cards in the deck · ${store.list('games').length} games played</p>
   </header>
 
+  ${syncConfigured() ? `
+  <section class="panel live-panel">
+    <h2>📡 Join a live game</h2>
+    <form class="inline-add" data-form="join-live">
+      <input name="code" placeholder="CODE" maxlength="4" autocomplete="off" autocapitalize="characters" spellcheck="false" class="code-input" value="${esc(ui.joinCode)}">
+      <button class="btn primary">Join</button>
+    </form>
+    <p class="muted small">Someone started a game on their phone? Enter the 4-letter code shown at the top of their screen.</p>
+  </section>` : ''}
+
   <section class="panel">
     <h2>Who's playing?</h2>
     <div class="chips">${players.map((p) => chip(pname(p), s.playerIds.includes(p.id), 'setup-player', { id: p.id })).join('')}</div>
@@ -200,10 +214,17 @@ function viewSetup() {
     ${mode.rules.needsLocation && !s.useLocation ? '<p class="warn">Explorer works best with GPS on.</p>' : ''}
   </section>
 
+  <section class="panel">
+    <h2>📡 Live on every phone</h2>
+    ${syncConfigured()
+      ? `<label class="switch-row"><input type="checkbox" data-act-change="setup-live" ${s.live ? 'checked' : ''}> <span>Share this game live. Friends join with a code, and anyone can draw and score.</span></label>`
+      : '<p class="muted small">Set up crew sync in Settings to play one game across several phones.</p>'}
+  </section>
+
   <div class="start-bar">
     <p class="muted small">${pool.length} card${pool.length === 1 ? '' : 's'} match this setup${draft.players.length < 2 ? ' (duo and versus cards need 2+ players)' : ''}</p>
     <button class="btn primary big" data-act="start-game" ${draft.players.length && pool.length ? '' : 'disabled'}>
-      ${draft.players.length ? `Start ${mode.icon} ${mode.name}` : 'Pick at least one player'}
+      ${draft.players.length ? `Start ${mode.icon} ${mode.name}${s.live && syncConfigured() ? ' live 📡' : ''}` : 'Pick at least one player'}
     </button>
   </div>
 
@@ -244,7 +265,7 @@ function viewGame() {
   return `
   <div class="game-top">
     <span>${g.modeIcon} <b>${esc(g.modeName)}</b> · ${progress}</span>
-    <span>${g.useLocation ? `<button class="gps-pill ${ui.geo}" data-act="geo-start">📍</button>` : ''}<button class="icon-btn" data-act="game-menu" aria-label="Game menu">⋯</button></span>
+    <span>${g.live ? `<button class="live-pill ${ui.liveOk ? '' : 'bad'}" data-act="live-info">📡 ${esc(g.live.code)}</button>` : ''}${g.useLocation ? `<button class="gps-pill ${ui.geo}" data-act="geo-start">📍</button>` : ''}<button class="icon-btn" data-act="game-menu" aria-label="Game menu">⋯</button></span>
   </div>
   <div class="scores">${g.players.map((p, i) => `
     <div class="score ${i === g.turn ? 'turn' : ''}"><span class="em">${esc(p.emoji)}</span><span class="nm">${esc(p.name)}</span><b>${stats[p.id].score}</b></div>`).join('')}
@@ -537,6 +558,7 @@ function renderSheet() {
   if (s.type === 'game') body = store.data.games[s.id] ? gameDetail(store.data.games[s.id]) : '<p>Game not found.</p>';
   if (s.type === 'player') body = sheetPlayer(store.get('players', s.id));
   if (s.type === 'menu') body = sheetMenu();
+  if (s.type === 'live') body = sheetLive();
   if (s.type === 'tools') body = `<h2>Tools</h2><div class="tool-grid">${Object.entries(TOOLS).map(([k, x]) => `<button class="${ui.freeTool === k ? 'on' : ''}" data-act="free-tool" data-v="${k}"><span>${x.icon}</span>${x.label}</button>`).join('')}</div>
     ${renderTool(ui.freeTool, toolState('free', ui.freeTool), { scope: 'free', players: store.game?.players || [] })}<div class="row"><button class="btn" data-act="close-sheet">Close</button></div>`;
   el.className = 'open';
@@ -573,10 +595,22 @@ function sheetMenu() {
       <button class="btn" data-act="undo" ${g.log.length || g.current ? '' : 'disabled'}>↩️ Undo last action</button>
       <button class="btn primary" data-act="end-game">🏁 End game & save</button>
       <button class="btn" data-act="add-to-game">＋ Add a player to this game</button>
-      <button class="btn bad" data-act="abandon-game">🗑 Abandon without saving</button>
+      ${g.live ? '<button class="btn" data-act="live-info">📡 Show join code</button><button class="btn" data-act="leave-live">🚪 Stop following on this phone</button>'
+        : syncConfigured() ? '<button class="btn" data-act="go-live">📡 Share this game live</button>' : ''}
+      <button class="btn bad" data-act="abandon-game">🗑 Abandon without saving${g.live ? ' (for everyone)' : ''}</button>
       <button class="btn" data-act="close-sheet">Close</button>
     </div>
     <p class="muted small">Penance chance: ${Math.round((g.rules.penanceChance || 0) * 100)}% · Free vetoes: ${g.rules.freeVetoes || 0} each · Points ×${g.rules.mult || 1}</p>`;
+}
+
+function sheetLive() {
+  const g = store.game;
+  if (!g?.live) return '<p>This game is not live.</p><div class="row"><button class="btn" data-act="close-sheet">Close</button></div>';
+  return `<h2>📡 Live game</h2>
+    <div class="join-code">${esc(g.live.code)}</div>
+    <p class="center">Friends open the deck → <b>Play</b> → <b>Join a live game</b> → enter this code.</p>
+    <p class="muted small center">${ui.liveOk ? '✓ Connected. Every phone sees the same card and scores, and anyone can draw and score.' : '⚠️ No connection right now. Moves made here will fail until it comes back.'}</p>
+    <div class="col"><button class="btn" data-act="close-sheet">Close</button></div>`;
 }
 
 function sheetPlayer(p) {
@@ -618,7 +652,63 @@ function addPlayer(name) {
   return store.put('players', { id: uid('p_'), name, emoji });
 }
 
-function startGame() {
+// ── Changing the game (on this phone, or live for everyone) ─────────────────
+let busy = false;
+
+/**
+ * Every change to the game goes through here. `fn` edits the game it is given and may return
+ * false to cancel. Local game: applied and saved. Live game: applied to a copy that is sent to
+ * the server together with the version it was based on. If another phone changed the game in
+ * the meantime, the server refuses, and this phone adopts the newer state instead, so nothing
+ * is ever counted twice. Returns true if the change went through.
+ */
+async function mutate(fn) {
+  const g = store.game;
+  if (!g) return false;
+  if (!g.live) {
+    if ((await fn(g)) === false) return false;
+    saveGame();
+    return true;
+  }
+  if (busy) return false; // ignore double taps while a move is on its way
+  busy = true;
+  document.body.classList.add('busy');
+  try {
+    const draft = structuredClone(g);
+    if ((await fn(draft)) === false) return false;
+    const r = await live.put(g.live.code, g.live.version, draft);
+    draft.live = { ...g.live, version: r.version };
+    store.game = draft;
+    saveGame();
+    setLiveOk(true);
+    return true;
+  } catch (e) {
+    if (e.status === 409 && e.body?.state) { applyRemote(e.body, { quiet: true }); toast('🔄 Someone else was quicker. Updated'); }
+    else if (e.status === 404) { dropGame('This live game no longer exists'); }
+    else { setLiveOk(false); toast(`⚠️ ${e.message}. Try again`); }
+    return false;
+  } finally {
+    busy = false;
+    document.body.classList.remove('busy');
+  }
+}
+
+function dropGame(msg) {
+  store.game = null; saveGame(); ui.sheet = null;
+  if (msg) toast(msg);
+  render();
+}
+
+function applyDeal(g, card, reshuffled = false) {
+  if (reshuffled) {
+    const done = new Set(g.log.filter((e) => e.type === 'done').map((e) => e.cardId));
+    g.used = g.used.filter((id) => done.has(id));
+  }
+  g.used.push(card.id);
+  g.current = { cardId: card.id, penance: rollPenance(g.rules, PENANCES), partners: [], winners: [], bonus: false, checkin: false, tools: {} };
+}
+
+async function startGame() {
   const s = ui.setup, mode = modeById[s.modeId];
   const draft = setupGameDraft();
   if (!draft.players.length) return;
@@ -628,82 +718,180 @@ function startGame() {
   };
   saveGame();
   if (s.useLocation) startGeo();
-  toast(`${draft.players[store.game.turn].name} starts!`);
-  render();
-}
-
-function dealCard(card, reshuffled = false) {
-  const g = store.game;
-  if (reshuffled) {
-    const done = new Set(g.log.filter((e) => e.type === 'done').map((e) => e.cardId));
-    g.used = g.used.filter((id) => done.has(id));
-    toast('🔄 Deck reshuffled');
-  }
-  g.used.push(card.id);
-  g.current = { cardId: card.id, penance: rollPenance(g.rules, PENANCES), partners: [], winners: [], bonus: false, checkin: false, tools: {} };
-  saveGame();
-}
-
-function resolve(type, how) {
-  const g = store.game, cur = g.current, card = cardById(cur.cardId);
-  const p = g.players[g.turn];
-  const entry = { ts: Date.now(), cardId: card.id, title: card.title, pid: p.id, type, awards: {}, place: !!card.place, offered: cur.penance || null, photo: cur.tools.photo?.key || null };
-  if (type === 'done') {
-    const ids = card.who === 'solo' ? [p.id] : card.who === 'duo' ? [p.id, ...cur.partners] : card.who === 'group' ? g.players.map((x) => x.id) : cur.winners;
-    const pts = completionPoints(card, g.rules, { bonus: cur.bonus, checkin: cur.checkin });
-    for (const id of ids) entry.awards[id] = pts;
-    Object.assign(entry, { bonus: cur.bonus, checkin: cur.checkin });
-    toast(`✅ +${pts} for ${ids.map((id) => g.players.find((x) => x.id === id)?.name).join(' & ')}`);
-  } else if (type === 'reject') {
-    const rc = rejectCost(card, g.rules, playerStats(g)[p.id]);
-    let cost = rc.cost;
-    if (how === 'penance' && cur.penance && !rc.free) { cost = costAfterPenance(cost, cur.penance.level); entry.penance = cur.penance; }
-    Object.assign(entry, { free: rc.free, cost });
-    if (cost) entry.awards[p.id] = -cost;
-    toast(rc.free ? '🙅 Free veto used' : `🙅 −${cost} for ${p.name}`);
+  const first = draft.players[store.game.turn].name;
+  if (s.live && syncConfigured()) {
+    const code = await goLive();
+    if (code) { ui.sheet = { type: 'live' }; toast(`📡 Live as ${code}. ${first} starts!`); }
   } else {
-    toast('😅 Good try. No points, no penalty');
+    toast(`${first} starts!`);
   }
-  g.log.push(entry);
-  g.current = null;
-  g.turn = (g.turn + 1) % g.players.length;
-  saveGame();
-  ui.sheet = null;
   render();
-  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-function undo() {
+/** Put the current game on the server and get a join code. */
+async function goLive() {
   const g = store.game;
-  if (g.current) {
-    // Put the drawn card back.
-    g.used = g.used.filter((id) => id !== g.current.cardId);
+  try {
+    const r = await live.create(g);
+    g.live = { code: r.code, version: r.version };
+    saveGame();
+    setLiveOk(true);
+    return r.code;
+  } catch (e) {
+    toast(`⚠️ Could not go live (${e.message}). Playing on this phone only`);
+    return null;
+  }
+}
+
+async function joinLive(raw) {
+  const code = normaliseCode(raw);
+  ui.joinCode = code;
+  if (code.length !== 4) { toast('A game code has 4 letters'); return; }
+  try {
+    const r = await live.get(code);
+    if (r.state.ended?.record) { finishFromRemote(r.state.ended.record); return; }
+    if (r.state.abandoned) { toast('That game was abandoned'); return; }
+    store.game = { ...r.state, live: { code, version: r.version } };
+    saveGame();
+    ui.joinCode = ''; ui.summaryId = null; ui.tab = 'play';
+    setLiveOk(true);
+    if (store.game.useLocation) startGeo();
+    toast(`📡 Joined ${code}`);
+    render();
+  } catch (e) {
+    toast(`⚠️ ${e.message}`);
+  }
+}
+
+function describeEntry(e, g) {
+  const name = g.players.find((p) => p.id === e.pid)?.name || '?';
+  if (e.type === 'done') return `✅ ${e.title}: ${Object.entries(e.awards).map(([id, pts]) => `${g.players.find((p) => p.id === id)?.name} +${pts}`).join(', ')}`;
+  if (e.type === 'reject') return `🙅 ${name} rejected ${e.title}${e.cost ? ` (−${e.cost})` : ''}`;
+  return `😅 ${name} gave ${e.title} a go`;
+}
+
+/** Another phone changed the live game: take over its state. */
+function applyRemote({ version, state }, { quiet = false } = {}) {
+  const prev = store.game;
+  if (!prev?.live) return;
+  if (state.ended?.record) { finishFromRemote(state.ended.record); return; }
+  if (state.abandoned) { dropGame('The game was abandoned on another phone'); return; }
+  const g = { ...state, live: { code: prev.live.code, version } };
+  if (!quiet && g.log.length > prev.log.length) toast(describeEntry(g.log[g.log.length - 1], g));
+  store.game = g;
+  saveGame();
+  if (ui.sheet && ['reject', 'menu'].includes(ui.sheet.type)) ui.sheet = null; // those were about the old state
+  if (ui.tab === 'play') render();
+}
+
+function finishFromRemote(record) {
+  store.merge({ games: [record] });
+  store.game = null; saveGame();
+  ui.sheet = null; ui.summaryId = record.id; ui.tab = 'play';
+  toast('🏁 Game over!');
+  render();
+}
+
+// Poll the live game every 2.5 s while it is open and visible.
+let pollTimer = null, polling = false;
+function syncLivePolling() {
+  const on = !!store.game?.live;
+  if (on && !pollTimer) pollTimer = setInterval(pollLive, 2500);
+  if (!on && pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+async function pollLive() {
+  const g = store.game;
+  if (!g?.live || busy || polling || document.hidden) return;
+  polling = true;
+  try {
+    const r = await live.get(g.live.code, g.live.version);
+    setLiveOk(true);
+    const now = store.game;
+    if (r && !busy && now?.live?.code === g.live.code && r.version > now.live.version) applyRemote(r);
+  } catch (e) {
+    if (e.status === 404) dropGame('The live game is gone');
+    else setLiveOk(false);
+  } finally {
+    polling = false;
+  }
+}
+function setLiveOk(ok) {
+  if (ui.liveOk === ok) return;
+  ui.liveOk = ok;
+  document.querySelector('.live-pill')?.classList.toggle('bad', !ok);
+}
+
+async function resolve(type, how) {
+  const cardId = store.game?.current?.cardId;
+  if (!cardId) return;
+  let msg = '';
+  const ok = await mutate((g) => {
+    const cur = g.current;
+    if (!cur || cur.cardId !== cardId) return false; // already resolved on another phone
+    const card = cardById(cur.cardId);
+    const p = g.players[g.turn];
+    const entry = { ts: Date.now(), cardId: card.id, title: card.title, pid: p.id, type, awards: {}, place: !!card.place, offered: cur.penance || null, photo: cur.tools.photo?.key || null };
+    if (type === 'done') {
+      const ids = card.who === 'solo' ? [p.id] : card.who === 'duo' ? [p.id, ...cur.partners] : card.who === 'group' ? g.players.map((x) => x.id) : cur.winners;
+      const pts = completionPoints(card, g.rules, { bonus: cur.bonus, checkin: cur.checkin });
+      for (const id of ids) entry.awards[id] = pts;
+      Object.assign(entry, { bonus: cur.bonus, checkin: cur.checkin });
+      msg = `✅ +${pts} for ${ids.map((id) => g.players.find((x) => x.id === id)?.name).join(' & ')}`;
+    } else if (type === 'reject') {
+      const rc = rejectCost(card, g.rules, playerStats(g)[p.id]);
+      let cost = rc.cost;
+      if (how === 'penance' && cur.penance && !rc.free) { cost = costAfterPenance(cost, cur.penance.level); entry.penance = cur.penance; }
+      Object.assign(entry, { free: rc.free, cost });
+      if (cost) entry.awards[p.id] = -cost;
+      msg = rc.free ? '🙅 Free veto used' : `🙅 −${cost} for ${p.name}`;
+    } else {
+      msg = '😅 Good try. No points, no penalty';
+    }
+    g.log.push(entry);
     g.current = null;
-  } else {
-    const e = g.log.pop();
-    if (!e) return;
-    g.turn = Math.max(0, g.players.findIndex((p) => p.id === e.pid));
-    g.current = { cardId: e.cardId, penance: e.offered || null, partners: [], winners: [], bonus: !!e.bonus, checkin: !!e.checkin, tools: e.photo ? { photo: { key: e.photo } } : {} };
-  }
-  saveGame();
+    g.turn = (g.turn + 1) % g.players.length;
+  });
+  if (ok) { toast(msg); ui.sheet = null; }
+  render();
+  if (ok) window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+async function undo() {
+  const ok = await mutate((g) => {
+    if (g.current) {
+      // Put the drawn card back.
+      g.used = g.used.filter((id) => id !== g.current.cardId);
+      g.current = null;
+    } else {
+      const e = g.log.pop();
+      if (!e) return false;
+      g.turn = Math.max(0, g.players.findIndex((p) => p.id === e.pid));
+      g.current = { cardId: e.cardId, penance: e.offered || null, partners: [], winners: [], bonus: !!e.bonus, checkin: !!e.checkin, tools: e.photo ? { photo: { key: e.photo } } : {} };
+    }
+  });
   ui.sheet = null;
-  toast('↩️ Undone');
+  if (ok) toast('↩️ Undone');
   render();
 }
 
-function endGame() {
+async function endGame() {
   const g = store.game;
   if (!g.log.length) {
     if (!confirm('No cards were played. End without saving?')) return;
-    store.game = null; saveGame(); ui.sheet = null; render(); return;
+    if (g.live && !(await mutate((d) => { d.abandoned = true; }))) return;
+    dropGame();
+    return;
   }
   const stats = playerStats(g);
   const rows = g.players.map((p) => ({ ...p, ...stats[p.id] }));
   const record = {
     id: g.id, startedAt: g.startedAt, endedAt: Date.now(), modeId: g.modeId, modeName: g.modeName, modeIcon: g.modeIcon,
-    players: rows, winnerIds: winnersOf(rows), log: g.log,
+    players: rows, winnerIds: winnersOf(rows), log: g.log, updatedAt: Date.now(),
   };
-  store.put('games', record);
+  // Live: tell the other phones the game is over (they show the same podium).
+  if (g.live && !(await mutate((d) => { d.ended = { record }; }))) return;
+  store.merge({ games: [record] });
+  scheduleSync(500);
   store.game = null; saveGame();
   ui.sheet = null; ui.summaryId = record.id; ui.tab = 'play';
   render();
@@ -803,23 +991,43 @@ const actions = {
     startGeo();
   },
   'start-game': startGame,
-  'draw': () => {
-    const g = store.game;
-    const res = drawCard(allCards(), g, g.useLocation ? ui.here : null);
-    if (!res) { toast('No cards left for this mode. End the game or change the deck'); return; }
-    dealCard(res.card, res.reshuffled);
+  'draw': async () => {
+    let none = false, reshuffled = false;
+    await mutate((g) => {
+      if (g.current) return false; // someone already drew
+      const res = drawCard(allCards(), g, g.useLocation ? ui.here : null);
+      if (!res) { none = true; return false; }
+      applyDeal(g, res.card, res.reshuffled);
+      reshuffled = res.reshuffled;
+    });
+    if (none) toast('No cards left for this mode. End the game or change the deck');
+    if (reshuffled) toast('🔄 Deck reshuffled');
     renderView();
   },
-  'take-card': ({ id }) => { const c = cardById(id); if (c) { dealCard(c); renderView(); window.scrollTo({ top: 0 }); } },
-  'skip-turn': () => { const g = store.game; g.turn = (g.turn + 1) % g.players.length; saveGame(); renderView(); },
-  'pick-partner': ({ id }) => { const c = store.game.current; c.partners = c.partners.includes(id) ? c.partners.filter((x) => x !== id) : [...c.partners, id]; saveGame(); renderView(); },
-  'pick-winner': ({ id }) => { const c = store.game.current; c.winners = c.winners.includes(id) ? c.winners.filter((x) => x !== id) : [...c.winners, id]; saveGame(); renderView(); },
-  'checkin': () => {
-    const g = store.game, card = cardById(g.current.cardId), p = resolvePlace(card);
+  'take-card': async ({ id }) => {
+    const c = cardById(id);
+    if (!c) return;
+    const ok = await mutate((g) => { if (g.current) return false; applyDeal(g, c); });
+    renderView();
+    if (ok) window.scrollTo({ top: 0 });
+  },
+  'skip-turn': async () => { await mutate((g) => { if (g.current) return false; g.turn = (g.turn + 1) % g.players.length; }); renderView(); },
+  'pick-partner': async ({ id }) => {
+    await mutate((g) => { const c = g.current; if (!c) return false; c.partners = c.partners.includes(id) ? c.partners.filter((x) => x !== id) : [...c.partners, id]; });
+    renderView();
+  },
+  'pick-winner': async ({ id }) => {
+    await mutate((g) => { const c = g.current; if (!c) return false; c.winners = c.winners.includes(id) ? c.winners.filter((x) => x !== id) : [...c.winners, id]; });
+    renderView();
+  },
+  'checkin': async () => {
+    const card = cardById(store.game.current.cardId), p = resolvePlace(card);
     if (!ui.here || !p) return toast('📍 No GPS fix yet');
     const d = distanceM(ui.here, p);
     if (d > CHECKIN_RADIUS) return toast(`Still ${fmtDistance(d)} away. Get within ${CHECKIN_RADIUS} m`);
-    g.current.checkin = true; saveGame(); toast(`📍 Checked in! +${CHECKIN_BONUS}`); renderView();
+    const ok = await mutate((g) => { if (g.current?.cardId !== card.id) return false; g.current.checkin = true; });
+    if (ok) toast(`📍 Checked in! +${CHECKIN_BONUS}`);
+    renderView();
   },
   'resolve-done': () => resolve('done'),
   'resolve-fail': () => resolve('fail'),
@@ -828,19 +1036,32 @@ const actions = {
   'game-menu': () => { ui.sheet = { type: 'menu' }; renderSheet(); },
   'undo': undo,
   'end-game': endGame,
-  'abandon-game': () => {
-    if (!confirm('Abandon this game? Nothing will be saved.')) return;
-    store.game = null; saveGame(); ui.sheet = null; render();
-  },
-  'add-to-game': () => {
+  'abandon-game': async () => {
     const g = store.game;
+    if (!confirm(g.live ? 'Abandon this game for everyone? Nothing will be saved.' : 'Abandon this game? Nothing will be saved.')) return;
+    if (g.live && !(await mutate((d) => { d.abandoned = true; }))) return;
+    dropGame();
+  },
+  'add-to-game': async () => {
     const name = prompt('Name of the player joining:');
     if (!name) return;
     const p = addPlayer(name);
     if (!p) return;
-    if (g.players.some((x) => x.id === p.id)) return toast(`${p.name} is already playing`);
-    g.players.push({ id: p.id, name: p.name, emoji: p.emoji });
-    saveGame(); ui.sheet = null; toast(`${p.emoji} ${p.name} joined`); render();
+    if (store.game.players.some((x) => x.id === p.id)) return toast(`${p.name} is already playing`);
+    const ok = await mutate((g) => { if (g.players.some((x) => x.id === p.id)) return false; g.players.push({ id: p.id, name: p.name, emoji: p.emoji }); });
+    ui.sheet = null;
+    if (ok) toast(`${p.emoji} ${p.name} joined`);
+    render();
+  },
+  'live-info': () => { ui.sheet = { type: 'live' }; renderSheet(); },
+  'go-live': async () => {
+    const code = await goLive();
+    ui.sheet = code ? { type: 'live' } : null;
+    render();
+  },
+  'leave-live': () => {
+    if (!confirm('Stop following this game on this phone? It carries on for the others.')) return;
+    dropGame('You left the live game');
   },
   'summary-close': () => { ui.summaryId = null; renderView(); },
   'open-game': ({ id }) => { ui.sheet = { type: 'game', id }; renderSheet(); },
@@ -851,11 +1072,19 @@ const actions = {
   'open-tools': () => { ui.sheet = { type: 'tools' }; renderSheet(); },
   'free-tool': ({ v }) => { ui.freeTool = v; if (ui.sheet?.type === 'tools') renderSheet(); else renderView(); },
   'tool': async ({ scope, tool, op }) => {
-    const st = toolState(scope, tool);
-    const ctx = { scope, card: scope === 'game' && store.game?.current ? cardById(store.game.current.cardId) : null, players: store.game?.players || [] };
-    await toolOp(tool, st, op, ctx);
-    if (scope === 'game') saveGame();
-    if (ui.sheet?.type === 'tools' && scope === 'free') renderSheet(); else renderView();
+    const players = store.game?.players || [];
+    if (scope === 'game') {
+      // Tools on the current card are part of the game, so a live timer or bingo card is shared.
+      const cardId = store.game?.current?.cardId;
+      await mutate(async (g) => {
+        if (!g.current || g.current.cardId !== cardId) return false;
+        await toolOp(tool, (g.current.tools[tool] ??= {}), op, { scope, card: cardById(cardId), players });
+      });
+      renderView();
+      return;
+    }
+    await toolOp(tool, toolState(scope, tool), op, { scope, card: null, players });
+    if (ui.sheet?.type === 'tools') renderSheet(); else renderView();
   },
   // Cards
   'card-source': ({ v }) => { ui.cards.source = v; renderView(); },
@@ -907,18 +1136,31 @@ const actions = {
 
 const changeActions = {
   'setup-location': (el) => { ui.setup.useLocation = el.checked; if (el.checked) startGeo(); renderView(); },
-  'range': (el) => { store.settings.range = Number(el.value); store.saveSettings(); if (store.game) { store.game.range = store.settings.range; saveGame(); } renderView(); },
-  'bonus': (el) => { store.game.current.bonus = el.checked; saveGame(); renderView(); },
+  'setup-live': (el) => { ui.setup.live = el.checked; renderView(); },
+  'range': async (el) => {
+    store.settings.range = Number(el.value); store.saveSettings();
+    if (store.game) await mutate((g) => { g.range = store.settings.range; });
+    renderView();
+  },
+  'bonus': async (el) => {
+    const checked = el.checked;
+    await mutate((g) => { if (!g.current) return false; g.current.bonus = checked; });
+    renderView();
+  },
   'photo': async (el) => {
     const file = el.files?.[0];
     if (!file) return;
+    const scope = el.dataset.scope;
     try {
       const blob = await compressImage(file);
-      const st = toolState(el.dataset.scope, 'photo');
       const key = uid('ph_');
-      await photos.put(key, blob);
-      st.key = key;
-      if (el.dataset.scope === 'game') saveGame();
+      await photos.put(key, blob); // the photo itself stays on this phone
+      if (scope === 'game') {
+        const cardId = store.game?.current?.cardId;
+        await mutate((g) => { if (g.current?.cardId !== cardId) return false; g.current.tools.photo = { key }; });
+      } else {
+        toolState(scope, 'photo').key = key;
+      }
       toast('📷 Photo saved');
     } catch (e) { toast('⚠️ ' + e.message); }
     if (ui.sheet?.type === 'tools') renderSheet(); else renderView();
@@ -946,6 +1188,7 @@ const formActions = {
     $('[data-form="add-player"] input')?.focus();
   },
   'card': saveCardForm,
+  'join-live': (form) => joinLive(form.code.value),
   'player': (form) => {
     const fd = new FormData(form);
     const p = store.get('players', fd.get('id'));
@@ -1006,7 +1249,11 @@ function autoSync() {
   lastAutoSync = Date.now();
   sync().catch(() => {});
 }
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') autoSync(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  autoSync();
+  pollLive(); // catch up on a live game straight away after the phone was locked
+});
 store.onChange(() => renderView());
 
 // ── Boot ────────────────────────────────────────────────────────────────────
