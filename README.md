@@ -2,15 +2,17 @@
 
 A challenge card game for walking around Copenhagen with friends. Install it on your phone's home screen. It works offline, and it can share players, highscores and your own cards between your phones.
 
-Version 2.7. The original Koder version is in `v1-original/`.
+Version 2.8. The original Koder version is in `v1-original/`.
 
 ## What's in it
 
-- **229 cards**: the 18 originals (merged and fixed) plus about 210 new ones. 85 of them are **location cards** at 75 Copenhagen spots (Indre By, Christianshavn, Nørrebro, Nordvest, Vesterbro, Frederiksberg, Valby, Islands Brygge, Amager and Sydhavn), only dealt when you're within range (500–1000 m, set in Settings).
+- **295 cards** (229 walking, 66 couch): the 18 originals (merged and fixed) plus the rest. Versus cards were cut to about 30; many contests became solo cards with a clear "done if…" or group cards. 85 of them are **location cards** at 75 Copenhagen spots (Indre By, Christianshavn, Nørrebro, Nordvest, Vesterbro, Frederiksberg, Valby, Islands Brygge, Amager and Sydhavn), only dealt when you're within range (500–1000 m, set in Settings).
 - **Season, daylight and weather**: cards can say when they work (summer, winter, Christmas, daylight, after dark, opening hours, dry, raining). The deck only deals what fits right now, using the calendar, a sunset calculation and live weather for central Copenhagen from Open-Meteo. While it rains, indoor cards come up twice as often. Can be switched off on the Play screen.
 - **Players, points and turns**: a scoreboard, a podium and awards at the end (🎯 Closer, 🐔 Chicken, 🦾 Iron, 🧭 Explorer, 🔥 Legend).
 - **Rejections and penances**: see Scoring below.
-- **8 game modes**: Classic, Quick walk, Explorer, Bar crawl, Sweat, Chill, Crew cards, and Custom (pick tags, length, difficulty and rules yourself).
+- **10 game modes**: Classic, Quick walk, Explorer, Bar crawl, Sweat, Chill, Crew cards, Custom (pick tags, length, difficulty and rules yourself), plus two indoor modes with their own decks:
+  - **🛋️ Couch**: 66 cards for the sofa: would you rather, deep questions, jokes, charades, quick party games. 42 of them also turn up (at half the rate) in walking games; walking cards never come up on the couch.
+  - **🎮 CoD splitscreen**: the app makes up each round: game, map, mode, house rule (sniper battle, pistols only, controller swap…) and who plays, including teams and co-op zombies/survival. It only uses the games you tick and never puts more players on screen than the game supports (MW2, Black Ops, MW3, Black Ops II and Black Ops III do 4; Ghosts, Advanced Warfare, Infinite Warfare and WWII do 2). With more players, people take turns sitting out and refereeing. Data: `js/data/cod.js`, researched from the Call of Duty Wiki, Activision FAQs and Co-Optimus.
 - **Built-in tools**: timer, stopwatch, photo proof, Sound Bingo, random S-train/Metro station, random direction or "wind at your back" (live wind data), Urban Tarot, movie scenes, debate topics, random letter, coin, dice, and a random player picker.
 - **Card builder**: make your own cards, including cards tied to a spot from the list or to the GPS spot you're standing on. You can switch off default cards you don't like.
 - **Records**: an all-time leaderboard (points, wins, best game, average, chicken…), top-15 highscores, and a full game history with photos.
@@ -118,7 +120,9 @@ Games in progress are stored in a small D1 database (Cloudflare's SQLite). Unlik
 
 To play: when starting a game, keep **📡 Share this game live** on. The code appears at the top of the screen (tap it to show it big). Others go to **Play → Join a live game** and enter it. You can also put an ongoing game live from the **⋯** menu.
 
-- **The others confirm results.** In a live game, ✅ Done and 😅 Failed are a claim: the other players (not the one on turn, not guests) confirm on their phones. You choose when starting: **majority of the others** (default), **everyone else**, or **off**. A ❌ No from enough of them sends it back, and the claimer can withdraw. After 2 minutes, a claim with only ✅ votes can be accepted as it stands, so nobody can block the game. A phone with ⭐ This is me votes only as you; a shared phone without it can vote for anyone. **A veto is always instant**, and only the player on turn (or a shared phone) can veto.
+- **Lobby first.** Starting a live game opens a lobby with the join code. Phones that join add their player (phones without ⭐ This is me pick who they are); the host can add crew players or guests, remove people, and taps ▶️ Start when everyone is in.
+- **Your turn, your draw.** Only the phone of the player on turn can draw, take a nearby spot, skip or veto; the others see "Waiting for … to draw". A shared phone without ⭐ This is me can do everything.
+- **A majority confirms results.** ✅ Done, 😅 Failed and 🏆 I won are claims. A majority of all players (guests excluded) decides, and the claim counts as the claimer's yes: with 3 players, one more yes is enough. Enough ❌ No votes send it back; the claimer can withdraw; after 2 minutes a claim with only ✅ votes can be accepted as it stands. Can be switched off at the start. **A veto is always instant.**
 - Every move is sent to the server first. If the connection drops, the move fails with a message and nothing is lost: tap again when you have signal. The 📡 pill turns red while a phone has no connection.
 - Photos stay on the phone that took them. GPS check-in uses the location of whoever presses it.
 - **⋯ → Stop following on this phone** leaves the game; it carries on for the others. **Abandon** ends it for everyone.

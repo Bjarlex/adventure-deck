@@ -138,6 +138,11 @@ export const MODES = [
     filter: { customOnly: true }, rules: { freeVetoes: 1, penanceChance: 0.4, mult: 1 } },
   { id: 'custom',   name: 'Custom',     icon: '🛠️', desc: 'Pick the tags, length, difficulty and rules yourselves.',
     filter: {}, rules: { freeVetoes: 1, penanceChance: 0.4, mult: 1 }, custom: true },
+  // Indoor modes: their own decks, no walking.
+  { id: 'couch',    name: 'Couch',      icon: '🛋️', desc: 'No walking. Would you rather, jokes, deep questions and quick party games for the sofa.',
+    filter: { deck: 'couch' }, rules: { freeVetoes: 2, penanceChance: 0.25, mult: 1 }, indoor: true },
+  { id: 'cod',      name: 'CoD splitscreen', icon: '🎮', desc: 'The app picks the game, map, mode, house rule and who plays. Only games your splitscreen supports for the player count.',
+    filter: { deck: 'cod' }, rules: { freeVetoes: 1, penanceChance: 0, mult: 1 }, indoor: true, generated: 'cod' },
 ];
 export const modeById = Object.fromEntries(MODES.map((m) => [m.id, m]));
 
@@ -157,6 +162,8 @@ export function normalizeCard(c, custom = false) {
     secs: c.tool === 'timer' ? clamp(Number(c.secs) || 60, 5, 7200) : null,
     place: c.place || null,
     needs: (Array.isArray(c.needs) ? c.needs : []).filter((n) => NEEDS[n]),
+    deck: ['walk', 'couch', 'cod'].includes(c.deck) ? c.deck : 'walk',
+    mix: !!c.mix,
     custom: custom || !!c.custom,
     author: c.author || null,
   };
@@ -184,7 +191,18 @@ export function cardPoints(card, rules = {}) {
   return Math.round(DIFF[card.diff].pts * (rules.mult || 1)) + (card.place ? PLACE_BONUS : 0);
 }
 
+/**
+ * Decks: 'walk' (the city cards), 'couch' (no walking) and 'cod' (generated Call of Duty rounds).
+ * Walking games may also deal couch cards marked `mix`; couch games never deal walking cards.
+ */
+export function inDeck(card, deck = 'walk') {
+  const d = card.deck || 'walk';
+  if (deck === 'walk') return d === 'walk' || (d === 'couch' && !!card.mix);
+  return d === deck;
+}
+
 export function matchesFilter(card, f = {}) {
+  if (!inDeck(card, f.deck)) return false;
   if (f.customOnly && !card.custom) return false;
   if (f.maxMins && card.mins > f.maxMins) return false;
   if (f.minDiff && card.diff < f.minDiff) return false;
@@ -275,7 +293,9 @@ export function drawCard(cards, game, here, rng = Math.random, cond = null) {
   } else {
     // Spots you can walk to are twice as likely; so are indoor cards while it rains.
     const raining = cond?.raining === true;
-    card = pickWeighted(pool, (c) => (c.place ? 2 : 1) * (raining && c.tags.includes('indoor') ? 2 : 1), rng);
+    // Couch cards mixed into a walking game come up half as often, so walks stay about walking.
+    const walking = (game.filter?.deck || 'walk') === 'walk';
+    card = pickWeighted(pool, (c) => (c.place ? 2 : 1) * (raining && c.tags.includes('indoor') ? 2 : 1) * (walking && c.deck === 'couch' ? 0.5 : 1), rng);
   }
   return { card, reshuffled };
 }
@@ -336,37 +356,37 @@ export function completionPoints(card, rules, { bonus = false, checkin = false }
 // In a live game, "Done" or "Failed" is a claim the other players confirm on their phones.
 // Rejecting (a veto) never needs confirmation.
 export const CONFIRM = {
-  majority: { label: 'Majority of the others', hint: 'More than half of the other players must confirm. Someone wandering off can\'t block the game.' },
-  all:      { label: 'Everyone else',          hint: 'All other players must confirm. One "no" sends it back.' },
-  off:      { label: 'Off',                    hint: 'Whoever taps Done or Failed decides, as in a local game.' },
+  majority: { label: 'Majority', hint: 'A majority of the players decides. The claim counts as the claimer\'s yes, so with 3 players one more yes is enough.' },
+  off:      { label: 'Off',      hint: 'Whoever taps Done or Failed decides, as in a local game.' },
 };
 export const CLAIM_TIMEOUT = 120000; // after 2 min, a claim with ≥1 yes and no "no" can be accepted as is
 
-/** Who votes on a claim: every player except the one on turn, and except guests (no phone). */
+/** Who votes on a claim: every player with a phone, i.e. everyone except guests. */
 export function claimVoters(game) {
-  const onTurn = game.players[game.turn]?.id;
-  return game.players.filter((p) => p.id !== onTurn && !isGuest(p)).map((p) => p.id);
+  return game.players.filter((p) => !isGuest(p)).map((p) => p.id);
 }
+
+/** Votes needed to accept: a majority of the voters. */
+export const votesNeeded = (game) => Math.floor(claimVoters(game).length / 2) + 1;
 
 export function needsConfirmation(game) {
-  return !!game.live && !!game.rules.confirm && game.rules.confirm !== 'off' && claimVoters(game).length > 0;
+  return !!game.live && !!game.rules.confirm && game.rules.confirm !== 'off' && claimVoters(game).length >= 2;
 }
 
-/** 'accepted' | 'disputed' | 'pending' for the claim on the current card (null without a claim). */
-export function claimOutcome(game, now = Date.now()) {
+/**
+ * 'accepted' | 'disputed' | 'pending' for the claim on the current card (null without a claim).
+ * Accepted once a majority said yes; disputed once a majority can no longer be reached.
+ */
+export function claimOutcome(game) {
   const claim = game.current?.claim;
   if (!claim) return null;
   const voters = claimVoters(game);
-  const n = voters.length;
-  if (!n) return 'accepted';
+  if (voters.length < 2) return 'accepted';
   const yes = voters.filter((id) => claim.votes?.[id] === 'yes').length;
-  const no = voters.filter((id) => claim.votes?.[id] === 'no').length;
-  if (game.rules.confirm === 'all') {
-    if (no > 0) return 'disputed';
-    return yes === n ? 'accepted' : 'pending';
-  }
-  if (yes >= Math.floor(n / 2) + 1) return 'accepted';
-  if (no >= Math.ceil(n / 2)) return 'disputed';
+  const open = voters.filter((id) => !claim.votes?.[id]).length;
+  const need = votesNeeded(game);
+  if (yes >= need) return 'accepted';
+  if (yes + open < need) return 'disputed';
   return 'pending';
 }
 

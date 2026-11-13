@@ -47,7 +47,7 @@ test('place ids are unique and inside Copenhagen', () => {
 });
 test('every mode has at least 15 cards (crew mode excepted)', () => {
   for (const m of R.MODES) {
-    if (m.filter.customOnly) continue;
+    if (m.filter.customOnly || m.generated) continue;
     const n = cards.filter((c) => !c.place && R.matchesFilter(c, m.filter)).length;
     ok(n >= 15, `${m.id} has only ${n}`);
   }
@@ -67,42 +67,107 @@ test('your areas now have location cards nearby', () => {
   }
 });
 
-// ── Confirming results in live games ──
-const claimGame = (n, confirm, votes = {}, extra = {}) => ({
+// ── Confirming results in live games: a majority of all players ──
+const claimGame = (n, votes = {}, confirm = 'majority') => ({
   live: { code: 'ABCD', version: 1 }, rules: { confirm }, turn: 0,
-  players: [P('turn'), ...Array.from({ length: n }, (_, i) => P('v' + i)), { id: 'guest_1', name: 'G', guest: true }],
-  current: { cardId: 'g001', claim: { type: 'done', by: null, at: 0, votes } }, ...extra,
+  players: [...Array.from({ length: n }, (_, i) => P('v' + i)), { id: 'guest_1', name: 'G', guest: true }],
+  current: { cardId: 'g001', claim: { type: 'done', by: 'v0', at: 0, votes } },
 });
-test('voters are everyone except the player on turn and guests', () => {
-  eq(R.claimVoters(claimGame(2, 'majority')), ['v0', 'v1']);
+test('every player with a phone votes, guests do not', () => {
+  eq(R.claimVoters(claimGame(3)), ['v0', 'v1', 'v2']);
+  eq([R.votesNeeded(claimGame(2)), R.votesNeeded(claimGame(3)), R.votesNeeded(claimGame(4)), R.votesNeeded(claimGame(5))], [2, 2, 3, 3]);
 });
-test('confirmation only applies to live games with other players', () => {
-  ok(R.needsConfirmation(claimGame(1, 'majority')));
-  ok(!R.needsConfirmation(claimGame(1, 'off')), 'off');
-  ok(!R.needsConfirmation({ ...claimGame(1, 'majority'), live: null }), 'local game');
-  ok(!R.needsConfirmation(claimGame(0, 'majority')), 'only guests besides you');
-  ok(!R.needsConfirmation({ ...claimGame(1, undefined) }), 'older games without the setting');
+test('confirmation only applies to live games with 2+ players on phones', () => {
+  ok(R.needsConfirmation(claimGame(2)));
+  ok(!R.needsConfirmation(claimGame(2, {}, 'off')), 'off');
+  ok(!R.needsConfirmation({ ...claimGame(2), live: null }), 'local game');
+  ok(!R.needsConfirmation(claimGame(1)), 'only you and guests');
 });
-test('majority of the others decides', () => {
-  const o = (n, votes) => R.claimOutcome(claimGame(n, 'majority', votes));
-  eq([o(1, { v0: 'yes' }), o(1, { v0: 'no' }), o(1, {})], ['accepted', 'disputed', 'pending']);
-  eq([o(2, { v0: 'yes' }), o(2, { v0: 'yes', v1: 'yes' }), o(2, { v0: 'no' })], ['pending', 'accepted', 'disputed']);
-  eq([o(3, { v0: 'yes', v1: 'yes' }), o(3, { v0: 'yes', v1: 'no' }), o(3, { v0: 'no', v1: 'no' })], ['accepted', 'pending', 'disputed']);
-  eq([o(4, { v0: 'yes', v1: 'yes' }), o(4, { v0: 'yes', v1: 'yes', v2: 'yes' }), o(4, { v0: 'no', v1: 'no' })], ['pending', 'accepted', 'disputed']);
+test('a majority of players decides; the claim is the claimer\'s yes', () => {
+  const o = (n, votes) => R.claimOutcome(claimGame(n, votes));
+  eq([o(3, { v0: 'yes' }), o(3, { v0: 'yes', v1: 'yes' })], ['pending', 'accepted'], '3 players: claimer + 1');
+  eq([o(3, { v0: 'yes', v1: 'no' }), o(3, { v0: 'yes', v1: 'no', v2: 'no' })], ['pending', 'disputed'], 'one no is not enough to stop it');
+  eq([o(2, { v0: 'yes' }), o(2, { v0: 'yes', v1: 'yes' }), o(2, { v0: 'yes', v1: 'no' })], ['pending', 'accepted', 'disputed'], '2 players');
+  eq([o(4, { v0: 'yes', v1: 'yes' }), o(4, { v0: 'yes', v1: 'yes', v2: 'yes' }), o(4, { v0: 'yes', v1: 'no', v2: 'no' })], ['pending', 'accepted', 'disputed'], '4 players');
 });
-test('"everyone else" needs every vote, one no sends it back', () => {
-  const o = (votes) => R.claimOutcome(claimGame(3, 'all', votes));
-  eq([o({ v0: 'yes', v1: 'yes' }), o({ v0: 'yes', v1: 'yes', v2: 'yes' }), o({ v0: 'yes', v1: 'yes', v2: 'no' })], ['pending', 'accepted', 'disputed']);
-});
-test('the player on turn and guests cannot vote themselves through', () => {
-  eq(R.claimOutcome(claimGame(1, 'majority', { turn: 'yes', guest_1: 'yes' })), 'pending');
+test('guests cannot tip a vote', () => {
+  eq(R.claimOutcome(claimGame(3, { v0: 'yes', guest_1: 'yes' })), 'pending');
 });
 test('a stuck claim can be accepted after 2 minutes, only with yes votes', () => {
-  const g = (votes) => claimGame(3, 'all', votes);
+  const g = (votes) => claimGame(5, votes);
   ok(!R.claimCanBeForced(g({ v0: 'yes' }), R.CLAIM_TIMEOUT - 1), 'too early');
   ok(R.claimCanBeForced(g({ v0: 'yes' }), R.CLAIM_TIMEOUT + 1));
-  ok(!R.claimCanBeForced(g({}), R.CLAIM_TIMEOUT + 1), 'no votes at all');
   ok(!R.claimCanBeForced(g({ v0: 'yes', v1: 'no' }), R.CLAIM_TIMEOUT + 1), 'someone said no');
+});
+
+// ── Decks: walking, couch, CoD ──
+test('couch cards stay in Couch mode; only mixable ones visit walks', () => {
+  const walk = R.eligibleCards(cards, game(), null);
+  const couch = R.eligibleCards(cards, game({ filter: { deck: 'couch' } }), null);
+  ok(couch.length >= 60 && couch.every((c) => c.deck === 'couch'), `couch pool ${couch.length}`);
+  ok(walk.some((c) => c.deck === 'couch') && walk.filter((c) => c.deck === 'couch').every((c) => c.mix), 'only mixable couch cards in walks');
+  ok(!couch.some((c) => c.deck === 'walk'), 'no walking cards on the couch');
+  eq(R.eligibleCards(cards, game({ filter: { deck: 'cod' } }), null).length, 0, 'CoD rounds are generated, not dealt');
+});
+test('fewer versus cards than before', () => {
+  const versus = cards.filter((c) => c.who === 'versus' && c.deck === 'walk').length;
+  ok(versus <= 35, `${versus} versus walking cards`);
+});
+test('mixed-in couch cards come up about half as often on walks', () => {
+  const g = game();
+  const pool = R.eligibleCards(cards, g, null);
+  const share = pool.filter((c) => c.deck === 'couch').length / pool.length;
+  let couch = 0; let seed = 7; const rng = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  for (let i = 0; i < 4000; i++) if (R.drawCard(cards, g, null, rng).card.deck === 'couch') couch++;
+  const drawn = couch / 4000;
+  ok(drawn < share * 0.75 && drawn > share * 0.3, `couch share ${share.toFixed(2)}, drawn ${drawn.toFixed(2)}`);
+});
+
+const { codRound } = await import('../js/cod.js');
+const { COD_GAMES } = await import('../js/data/cod.js');
+const codGame = (n, log = []) => ({ players: Array.from({ length: n }, (_, i) => P('p' + i)), turn: 0, log, filter: { deck: 'cod' }, rules: {} });
+test('CoD data: every game has maps, modes and a sane splitscreen limit', () => {
+  eq(COD_GAMES.length, 9);
+  for (const x of COD_GAMES) {
+    ok([2, 4].includes(x.maxSplit), x.id);
+    ok(x.maps.length >= 9 && x.modes.length >= 6, `${x.id} maps ${x.maps.length} modes ${x.modes.length}`);
+    ok(x.coop?.maps.length && [2, 4].includes(x.coop.maxSplit), `${x.id} coop`);
+  }
+  eq(COD_GAMES.filter((x) => x.maxSplit === 4).map((x) => x.id), ['mw2', 'bo1', 'mw3', 'bo2', 'bo3']);
+});
+test('CoD rounds never put more players on screen than the game allows', () => {
+  let seed = 3; const rng = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  for (const n of [2, 3, 4, 5, 6]) {
+    for (let i = 0; i < 300; i++) {
+      const r = codRound(codGame(n), [], rng);
+      const x = COD_GAMES.find((y) => y.id === r.cod.game);
+      const max = r.who === 'group' ? x.coop.maxSplit : x.maxSplit;
+      ok(r.players.length <= max && r.players.length <= n, `${n} players: ${r.players.length} on ${x.id} (${r.cod.format})`);
+      ok(r.players.includes('p0'), 'the player on turn always plays');
+      if (r.teams) eq(r.teams.flat().sort(), [...r.players].sort());
+      const mode = x.modes.find((m) => m.name === r.cod.mode);
+      if (r.who !== 'group') ok(mode && (mode.min || 0) <= r.players.length, `${r.cod.mode} needs more players`);
+      if (r.who !== 'group') ok(x.maps.includes(r.cod.map), r.cod.map);
+    }
+  }
+});
+test('CoD: 4-player rounds only on 4-player games; only owned games are used', () => {
+  let seed = 11; const rng = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  for (let i = 0; i < 300; i++) {
+    const r = codRound(codGame(4), ['ghosts', 'bo2'], rng);
+    ok(['ghosts', 'bo2'].includes(r.cod.game));
+    if (r.players.length === 4) ok(r.cod.game === 'bo2', 'Ghosts only does 2');
+  }
+  eq(codRound(codGame(4), ['nope'], rng), null, 'no owned games');
+});
+test('CoD: players who sat out get on screen next', () => {
+  let seed = 5; const rng = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const log = [{ onScreen: ['p0', 'p1'] }, { onScreen: ['p1', 'p0'] }];
+  for (let i = 0; i < 50; i++) {
+    const g = { ...codGame(4, log), turn: 1 };
+    const r = codRound(g, ['ghosts'], rng); // 2-player game, 4 players: p1 on turn + one who sat out
+    ok(r.players.includes('p1') && (r.players.includes('p2') || r.players.includes('p3')), r.players.join());
+  }
 });
 
 // ── Season, light and weather ──

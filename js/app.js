@@ -9,13 +9,15 @@ import {
   playerStats, rejectCost, costAfterPenance, completionPoints, currentRound, isOver, winnersOf, awardsFor,
   leaderboard, topScores, distanceM, bearingDeg, compassLabel, fmtDistance,
   nameKey, isGuest, similarNames, duplicateGroups, mergePlayerInGame,
-  CONFIRM, claimVoters, needsConfirmation, claimOutcome, claimCanBeForced,
+  CONFIRM, claimVoters, votesNeeded, needsConfirmation, claimOutcome, claimCanBeForced,
 } from './rules.js';
 import { store, uid, sync, syncConfigured, scheduleSync, photos, compressImage, canSync, isAdmin, crewsApi, MAIN } from './store.js';
 import { DEFAULT_SERVER } from './config.js';
 import { renderTool, toolOp, tickClock, fmtClock } from './tools.js';
 import { live, normaliseCode } from './live.js';
 import { getWeather, lastWeather } from './weather.js';
+import { codRound, ownedGames } from './cod.js';
+import { COD_GAMES } from './data/cod.js';
 
 import { VERSION } from './version.js';
 const $ = (s, el = document) => el.querySelector(s);
@@ -48,6 +50,8 @@ const ui = {
 // ── Card lookups ────────────────────────────────────────────────────────────
 const allCards = () => activeCards(DEFAULT_CARDS, store.list('cards'), store.data.toggles);
 function cardById(id) {
+  // Generated cards (CoD rounds) live inside the game itself.
+  if (store.game?.current?.card?.id === id) return store.game.current.card;
   const d = DEFAULT_CARDS.find((c) => c.id === id);
   if (d) return normalizeCard(d);
   const c = store.data.cards[id];
@@ -170,7 +174,7 @@ function setupGameDraft() {
     ...s.playerIds.map((id) => store.get('players', id)).filter(Boolean).map(({ id, name, emoji }) => ({ id, name, emoji })),
     ...s.guests,
   ];
-  return { filter, rules, players, range: store.settings.range, useLocation: s.useLocation, log: [], used: [] };
+  return { filter, rules, players, range: store.settings.range, useLocation: s.useLocation && !mode.indoor, log: [], used: [] };
 }
 
 /** The crew player this phone belongs to (set in Settings or on the Play screen). */
@@ -260,6 +264,7 @@ function viewSetup() {
     <div class="chips">${LENGTHS.map(([v, l]) => chip(l, s.length === v, 'setup-length', { v })).join('')}</div>
   </section>
 
+  ${mode.indoor ? codSetupPanel(mode) : `
   <section class="panel">
     <h2>Location cards</h2>
     <label class="switch-row"><input type="checkbox" data-act-change="setup-location" ${s.useLocation ? 'checked' : ''}> <span>Use GPS to deal cards for spots near you</span></label>
@@ -279,7 +284,7 @@ function viewSetup() {
     <p class="muted small">${store.settings.matchConditions !== false
       ? (heldBack > 0 ? `${heldBack} card${heldBack === 1 ? ' is' : 's are'} held back for now: they need another season, time of day or weather.` : 'Every card fits right now.') + (lastWeather()?.raining ? ' Indoor cards come up twice as often while it rains.' : '')
       : 'Off: any card can come up, also beach cards in a snowstorm.'}</p>
-  </section>
+  </section>`}
 
   <section class="panel">
     <h2>📡 Live on every phone</h2>
@@ -292,13 +297,30 @@ function viewSetup() {
   </section>
 
   <div class="start-bar">
-    <p class="muted small">${pool.length} card${pool.length === 1 ? '' : 's'} match this setup${draft.players.length < 2 ? ' (duo and versus cards need 2+ players)' : ''}</p>
-    <button class="btn primary big" data-act="start-game" ${draft.players.length && pool.length ? '' : 'disabled'}>
+    <p class="muted small">${mode.generated
+      ? `Rounds are made up as you play, from ${ownedGames(store.settings.codGames).length} game${ownedGames(store.settings.codGames).length === 1 ? '' : 's'}.`
+      : `${pool.length} card${pool.length === 1 ? '' : 's'} match this setup${draft.players.length < 2 ? ' (duo and versus cards need 2+ players)' : ''}`}</p>
+    <button class="btn primary big" data-act="start-game" ${draft.players.length && (mode.generated ? ownedGames(store.settings.codGames).length : pool.length) ? '' : 'disabled'}>
       ${draft.players.length ? `Start ${mode.icon} ${mode.name}${s.live && syncConfigured() ? ' live 📡' : ''}` : 'Pick at least one player'}
     </button>
   </div>
 
   ${rulesBlock()}`;
+}
+
+/** Setup panel for the indoor modes: which CoD games the crew has, or a note for Couch. */
+function codSetupPanel(mode) {
+  if (!mode.generated) {
+    return `<section class="panel"><h2>🛋️ Couch rules</h2><p class="muted small">Only couch cards: no walking, no GPS, no weather. Some of these cards also turn up in walking games, but walking cards never come up here.</p></section>`;
+  }
+  const owned = store.settings.codGames || [];
+  const n = ui.setup.playerIds.length + ui.setup.guests.length;
+  return `<section class="panel">
+    <h2>🎮 Games you have</h2>
+    <p class="muted small">Tap the ones your crew owns (none ticked = all). The app only picks games and modes that fit ${n || 'your'} player${n === 1 ? '' : 's'} on one screen; if you're more, players take turns sitting out and refereeing.</p>
+    <div class="chips">${COD_GAMES.map((x) => chip(`${esc(x.short)} <small>${x.maxSplit}P</small>`, owned.includes(x.id), 'cod-game', { id: x.id })).join('')}</div>
+    <p class="muted small">${COD_GAMES.filter((x) => x.note).map((x) => `${esc(x.short)}: ${esc(x.note)}.`).join(' ')} Co-op/zombies rounds use each game's own co-op limit (mostly 2 players).</p>
+  </section>`;
 }
 
 function rulesBlock() {
@@ -323,6 +345,7 @@ function geoLine() {
 // ── In-game ────────────────────────────────────────────────────────────────
 function viewGame() {
   const g = store.game;
+  if (g.lobby) return viewLobby(g);
   const stats = playerStats(g);
   const turnP = g.players[g.turn];
   const over = isOver(g);
@@ -351,16 +374,18 @@ function viewDrawArea(g, turnP) {
   return `
   <div class="draw-area">
     <p class="turn-label ${isMe(turnP.id) ? 'mine' : ''}">${isMe(turnP.id) ? `🎯 Your turn, ${esc(turnP.name)}!` : `${pname(turnP)}'s turn`}</p>
-    ${conditions() ? `<p class="muted small cond-line">${conditionsLine()}</p>` : ''}
-    <button class="deck-btn" data-act="draw"><span>🃏</span>Draw a card</button>
-    <button class="btn ghost" data-act="skip-turn">Skip to next player</button>
+    ${conditions() && !modeById[g.modeId]?.indoor ? `<p class="muted small cond-line">${conditionsLine()}</p>` : ''}
+    ${canAct(g)
+      ? `<button class="deck-btn" data-act="draw"><span>${g.filter?.deck === 'cod' ? '🎮' : '🃏'}</span>${g.filter?.deck === 'cod' ? 'Next round' : 'Draw a card'}</button>
+         <button class="btn ghost" data-act="skip-turn">Skip to next player</button>`
+      : `<div class="deck-btn waiting-turn"><span>⏳</span>Waiting for ${esc(turnP.name)} to draw</div>`}
   </div>
   ${g.useLocation ? `
   <section class="panel">
     <h2>📍 Spots in range <small class="muted">${g.range} m</small></h2>
     ${!here ? `<p class="muted small">${geoLine()}</p>` : near.length ? `<ul class="near-list">${near.slice(0, 8).map(({ card: c, dist }) => `
       <li><div><b>${esc(c.title)}</b><small>${esc(resolvePlace(c).name)} · ${fmtDistance(dist)} ${compassLabel(bearingDeg(here, resolvePlace(c)))} · +${cardPoints(c, g.rules)}</small></div>
-      ${g.rules.pickNearby ? `<button class="btn small" data-act="take-card" data-id="${c.id}">Take</button>` : ''}</li>`).join('')}</ul>
+      ${g.rules.pickNearby && canAct(g) ? `<button class="btn small" data-act="take-card" data-id="${c.id}">Take</button>` : ''}</li>`).join('')}</ul>
       ${g.rules.pickNearby ? '' : '<p class="muted small">These can come up when you draw. In Explorer mode you can pick one directly.</p>'}`
     : `<p class="muted small">No unplayed spots within ${g.range} m. Walk towards the centre, or raise the range in Settings.</p>`}
   </section>` : ''}`;
@@ -378,7 +403,13 @@ function viewCurrentCard(g, card, stats, turnP) {
   const needsPick = (card.who === 'duo' && !cur.partners.length) || (card.who === 'versus' && !cur.winners.length);
   let pickers = '';
   if (card.who === 'duo') pickers = `<div class="picker ${needsPick ? 'needed' : ''}"><p class="pick-label">👥 Who was your partner?</p><div class="chips">${others.map((p) => chip(pname(p), cur.partners.includes(p.id), 'pick-partner', { id: p.id })).join('')}</div></div>`;
-  if (card.who === 'versus') pickers = `<div class="picker ${needsPick ? 'needed' : ''}"><p class="pick-label">⚔️ Who won? <small class="muted">Tap one or more</small></p><div class="chips">${g.players.map((p) => chip(pname(p), cur.winners.includes(p.id), 'pick-winner', { id: p.id })).join('')}</div></div>`;
+  if (card.who === 'versus' && card.teams) {
+    // Team rounds (CoD): pick the winning team in one tap.
+    pickers = `<div class="picker ${needsPick ? 'needed' : ''}"><p class="pick-label">⚔️ Which team won?</p><div class="chips">${card.teams.map((t, i) => chip(`${['🟥', '🟦', '🟩', '🟨'][i]} ${t.map((id) => esc(g.players.find((p) => p.id === id)?.name)).join(' & ')}`, t.length && t.every((id) => cur.winners.includes(id)) && cur.winners.length === t.length, 'pick-team', { i })).join('')}</div></div>`;
+  } else if (card.who === 'versus') {
+    const field = card.players ? g.players.filter((p) => card.players.includes(p.id)) : g.players;
+    pickers = `<div class="picker ${needsPick ? 'needed' : ''}"><p class="pick-label">⚔️ ${myPlayerIn(g) ? 'Or pick who won' : 'Who won?'} <small class="muted">Tap one or more</small></p><div class="chips">${field.map((p) => chip(pname(p), cur.winners.includes(p.id), 'pick-winner', { id: p.id })).join('')}</div></div>`;
+  }
   if (card.who === 'group') pickers = '<p class="pick-label">🙌 Everyone scores</p>';
 
   return `
@@ -406,11 +437,13 @@ function viewCurrentCard(g, card, stats, turnP) {
     ${pickers}
     <label class="switch-row"><input type="checkbox" data-act-change="bonus" ${cur.bonus ? 'checked' : ''}> <span>🔥 Legendary (+25%)</span></label>
     <div class="resolve-btns">
-      <button class="btn ok big ${needsPick ? 'waiting' : ''}" data-act="resolve-done">✅ Done <small>${needsPick ? (card.who === 'duo' ? 'pick a partner first' : 'pick the winner first') : `+${pts}`}</small></button>
+      ${card.who === 'versus' && myPlayerIn(g) && !card.teams ? `<button class="btn ok big" data-act="i-won">🏆 I won <small>+${pts}</small></button>` : ''}
+      ${card.who === 'versus' && myPlayerIn(g) && card.teams ? card.teams.map((t, i) => t.includes(myPlayerIn(g)) ? `<button class="btn ok big" data-act="team-won" data-i="${i}">🏆 My team won <small>+${pts} each</small></button>` : '').join('') : ''}
+      <button class="btn ${card.who === 'versus' && myPlayerIn(g) ? '' : 'ok big'} ${needsPick ? 'waiting' : ''}" data-act="resolve-done">✅ ${card.who === 'versus' && myPlayerIn(g) ? 'Someone else won' : 'Done'} <small>${needsPick ? (card.who === 'duo' ? 'pick a partner first' : 'pick the winner first') : `+${pts}`}</small></button>
       <button class="btn" data-act="resolve-fail">😅 Failed <small>0</small></button>
       ${canVeto(g) ? `<button class="btn bad" data-act="open-reject">🙅 Reject <small>${rc.free ? 'free veto' : `−${rc.cost}`}</small></button>` : `<button class="btn bad" disabled>🙅 Only ${esc(turnP.name)} can veto</button>`}
     </div>
-    ${needsConfirmation(g) ? `<p class="muted small center">🗳 Done and Failed need confirming by the others (${esc(CONFIRM[g.rules.confirm].label.toLowerCase())}). A veto is instant.</p>` : ''}
+    ${needsConfirmation(g) ? `<p class="muted small center">🗳 Done and Failed need a majority of the players (${votesNeeded(g)} of ${claimVoters(g).length}); your claim counts as your yes. A veto is instant.</p>` : ''}
   </section>`}`;
 }
 
@@ -421,7 +454,7 @@ function viewClaim(g, card, pts, rc) {
   const claimer = claim.by ? byName(claim.by) : null;
   const voters = claimVoters(g).map(byName);
   const yes = voters.filter((p) => claim.votes[p.id] === 'yes').length;
-  const needed = g.rules.confirm === 'all' ? voters.length : Math.floor(voters.length / 2) + 1;
+  const needed = votesNeeded(g);
   const what = claim.type === 'done'
     ? `✅ <b>Done</b>: ${winnersText(g, card)} would get <b>+${pts}</b>`
     : '😅 <b>Failed</b>: no points, no penalty';
@@ -436,7 +469,7 @@ function viewClaim(g, card, pts, rc) {
         : canVoteAs(g, p.id) ? `<span class="row"><button class="btn small ok" data-act="vote" data-id="${p.id}" data-v="yes">✅ Confirm</button><button class="btn small bad" data-act="vote" data-id="${p.id}" data-v="no">❌ No</button></span>`
         : '<span class="muted">⏳ waiting</span>'}</li>`;
     }).join('')}</ul>
-    <p class="muted small">Confirmed ${yes} of ${needed} needed (${esc(CONFIRM[g.rules.confirm].label.toLowerCase())}).${mine && !claimVoters(g).includes(mine) ? ' It\'s your card, so the others decide.' : ''}</p>
+    <p class="muted small">${yes} of ${needed} yes votes needed (a majority of ${voters.length} players).</p>
     <div class="row">
       ${canWithdraw ? '<button class="btn small" data-act="withdraw-claim">↩️ Withdraw</button>' : ''}
       ${claimCanBeForced(g) ? '<button class="btn small" data-act="force-claim">⏱ Accept as it stands</button>' : ''}
@@ -447,7 +480,7 @@ function viewClaim(g, card, pts, rc) {
 
 function winnersText(g, card) {
   const cur = g.current, p = g.players[g.turn];
-  const ids = card.who === 'solo' ? [p.id] : card.who === 'duo' ? [p.id, ...cur.partners] : card.who === 'group' ? g.players.map((x) => x.id) : cur.winners;
+  const ids = card.who === 'solo' ? [p.id] : card.who === 'duo' ? [p.id, ...cur.partners] : card.who === 'group' ? (card.players || g.players.map((x) => x.id)) : cur.winners;
   return ids.map((id) => esc(g.players.find((x) => x.id === id)?.name)).join(' & ') || 'nobody';
 }
 
@@ -484,6 +517,8 @@ function filteredCardList() {
     if (f.source === 'default' && c.custom) return false;
     if (f.source === 'crew' && !c.custom) return false;
     if (f.source === 'off' && !isOff(c.id)) return false;
+    if (f.source === 'couch' && c.deck !== 'couch') return false;
+    if (f.source === 'walk' && c.deck === 'couch') return false;
     if (f.tag === 'place' && !c.place) return false;
     if (f.tag && f.tag !== 'place' && !c.tags.includes(f.tag)) return false;
     if (q && !(c.title + ' ' + c.text).toLowerCase().includes(q)) return false;
@@ -519,7 +554,7 @@ function viewCards() {
   <header class="page-head"><h1>Cards</h1><button class="btn primary" data-act="new-card">＋ New card</button></header>
   <p class="muted small">${DEFAULT_CARDS.length} default · ${crew} made by your crew · ${off} switched off. Switched-off cards are never dealt.</p>
   <input class="search" type="search" placeholder="Search cards" value="${esc(f.q)}" data-act-input="card-search">
-  <div class="chips">${[['all', 'All'], ['crew', '✍️ Crew'], ['default', 'Default'], ['off', '⏸ Off']].map(([v, l]) => chip(l, f.source === v, 'card-source', { v })).join('')}</div>
+  <div class="chips">${[['all', 'All'], ['walk', '🚶 Walking'], ['couch', '🛋️ Couch'], ['crew', '✍️ Crew'], ['default', 'Default'], ['off', '⏸ Off']].map(([v, l]) => chip(l, f.source === v, 'card-source', { v })).join('')}</div>
   <div class="chips scroll">${chip('All tags', !f.tag, 'card-tag', { v: '' })}${chip('📍 Spots', f.tag === 'place', 'card-tag', { v: 'place' })}${Object.entries(TAGS).map(([k, t]) => chip(`${t.icon} ${t.label}`, f.tag === k, 'card-tag', { v: k })).join('')}</div>
   <div id="card-list">${cardListHTML()}</div>`;
 }
@@ -535,6 +570,8 @@ function cardEditor(draft) {
     <label>Challenge<textarea name="text" maxlength="400" rows="4" required placeholder="What do you have to do? How do you win?">${esc(draft.text)}</textarea></label>
     <fieldset><legend>Difficulty</legend><div class="seg">${[1, 2, 3, 4].map((d) => `<label><input type="radio" name="diff" value="${d}" ${draft.diff === d ? 'checked' : ''}><span>${DIFF[d].label}<small>${DIFF[d].pts}</small></span></label>`).join('')}</div></fieldset>
     <fieldset><legend>Who does it</legend><div class="seg">${Object.entries(WHO).map(([k, w]) => `<label><input type="radio" name="who" value="${k}" ${draft.who === k ? 'checked' : ''}><span>${w.icon} ${w.label}</span></label>`).join('')}</div></fieldset>
+    <label>Deck<select name="deck"><option value="walk" ${draft.deck !== 'couch' ? 'selected' : ''}>🚶 Walking (city)</option><option value="couch" ${draft.deck === 'couch' ? 'selected' : ''}>🛋️ Couch (no walking)</option></select></label>
+    <label class="switch-row"><input type="checkbox" name="mix" ${draft.mix ? 'checked' : ''}> <span>Couch card that also works on a walk</span></label>
     <label>Roughly how many minutes<input name="mins" type="number" min="1" max="240" inputmode="numeric" value="${draft.mins}"></label>
     <fieldset><legend>Tags</legend><div class="seg wrap">${Object.entries(TAGS).map(([k, t]) => `<label><input type="checkbox" name="tags" value="${k}" ${draft.tags.includes(k) ? 'checked' : ''}><span>${t.icon} ${t.label}</span></label>`).join('')}</div></fieldset>
     <fieldset><legend>Only when… <small class="muted">(leave empty for any time)</small></legend><div class="seg wrap">${Object.entries(NEEDS).map(([k, n]) => `<label><input type="checkbox" name="needs" value="${k}" ${(draft.needs || []).includes(k) ? 'checked' : ''}><span>${n.icon} ${n.label}</span></label>`).join('')}</div></fieldset>
@@ -1004,8 +1041,9 @@ function applyDeal(g, card, reshuffled = false) {
     const done = new Set(g.log.filter((e) => e.type === 'done').map((e) => e.cardId));
     g.used = g.used.filter((id) => done.has(id));
   }
-  g.used.push(card.id);
+  if (!card.generated) g.used.push(card.id);
   g.current = { cardId: card.id, penance: rollPenance(g.rules, PENANCES), partners: [], winners: [], bonus: false, checkin: false, tools: {} };
+  if (card.generated) g.current.card = card; // generated rounds travel with the game (live phones need them too)
 }
 
 async function startGame() {
@@ -1016,14 +1054,19 @@ async function startGame() {
     id: uid('g_'), startedAt: Date.now(), modeId: mode.id, modeName: mode.name, modeIcon: mode.icon,
     ...draft, turn: Math.floor(Math.random() * draft.players.length), current: null,
   };
-  saveGame();
-  if (s.useLocation) startGeo();
-  const first = draft.players[store.game.turn].name;
+  if (s.useLocation && !mode.indoor) startGeo();
   if (s.live && syncConfigured()) {
+    // Live: open a lobby first, so everyone can join before the first card.
+    const g = store.game;
+    const mine = myPlayerIn(g);
+    Object.assign(g, { lobby: true, host: mine, phones: mine ? [mine] : [] });
+    saveGame();
     const code = await goLive();
-    if (code) { ui.sheet = { type: 'live' }; toast(`📡 Live as ${code}. ${first} starts!`); }
+    if (code) toast(`📡 Lobby open: ${code}`);
+    else { g.lobby = false; saveGame(); toast(`${g.players[g.turn].name} starts!`); }
   } else {
-    toast(`${first} starts!`);
+    saveGame();
+    toast(`${draft.players[store.game.turn].name} starts!`);
   }
   render();
 }
@@ -1059,6 +1102,10 @@ async function joinLive(raw) {
     if (store.game.useLocation) startGeo();
     toast(`📡 Joined ${code}`);
     render();
+    // In the lobby, a phone that knows who it is adds itself straight away.
+    const m = me();
+    if (m && store.game.lobby) await lobbyAddMe(m);
+    else if (m && store.game.players.some((p) => p.id === m.id) && !(store.game.phones || []).includes(m.id)) await lobbyAddMe(m);
   } catch (e) {
     toast(`⚠️ ${e.message}`);
   }
@@ -1090,7 +1137,9 @@ function applyRemote({ version, state }, { quiet = false } = {}) {
       try { navigator.vibrate?.([80, 40, 80]); } catch {}
     }
   }
-  const myTurnNow = isMe(g.players[g.turn]?.id) && !isMe(prev.players[prev.turn]?.id);
+  if (!quiet && prev.lobby && !g.lobby) toast(`▶️ The game has started! ${g.players[g.turn]?.name} goes first`);
+  else if (!quiet && g.lobby && g.players.length > prev.players.length) toast(`👋 ${g.players[g.players.length - 1].name} joined`);
+  const myTurnNow = !g.lobby && isMe(g.players[g.turn]?.id) && (prev.lobby || !isMe(prev.players[prev.turn]?.id));
   if (myTurnNow) {
     setTimeout(() => toast('🎯 Your turn!'), quiet ? 0 : 1800);
     try { navigator.vibrate?.([120, 60, 120]); } catch {}
@@ -1147,7 +1196,7 @@ function applyResolution(g, type, how) {
   const entry = { ts: Date.now(), cardId: card.id, title: card.title, pid: p.id, type, awards: {}, place: !!card.place, offered: cur.penance || null, photo: cur.tools.photo?.key || null };
   let msg;
   if (type === 'done') {
-    const ids = card.who === 'solo' ? [p.id] : card.who === 'duo' ? [p.id, ...cur.partners] : card.who === 'group' ? g.players.map((x) => x.id) : cur.winners;
+    const ids = card.who === 'solo' ? [p.id] : card.who === 'duo' ? [p.id, ...cur.partners] : card.who === 'group' ? (card.players || g.players.map((x) => x.id)) : cur.winners;
     if (!ids.length || (card.who === 'duo' && ids.length < 2)) return false; // nobody picked: nothing to score
     const pts = completionPoints(card, g.rules, { bonus: cur.bonus, checkin: cur.checkin });
     for (const id of ids) entry.awards[id] = pts;
@@ -1164,6 +1213,7 @@ function applyResolution(g, type, how) {
     msg = '😅 Good try. No points, no penalty';
   }
   if (cur.claim) entry.confirmedBy = Object.keys(cur.claim.votes || {}).filter((id) => cur.claim.votes[id] === 'yes');
+  if (card.players) entry.onScreen = card.players; // CoD: who played, so sitting out rotates fairly
   g.log.push(entry);
   g.current = null;
   g.turn = (g.turn + 1) % g.players.length;
@@ -1193,6 +1243,50 @@ const myPlayerIn = (g) => (me() && g.players.some((p) => p.id === store.crew().m
 const canVoteAs = (g, pid) => claimVoters(g).includes(pid) && (!myPlayerIn(g) || myPlayerIn(g) === pid);
 /** A veto is the player's own call: in a live game only their phone (or a shared phone) offers it. */
 const canVeto = (g) => !g.live || !myPlayerIn(g) || myPlayerIn(g) === g.players[g.turn].id;
+/** Drawing, taking a spot and skipping belong to the player on turn too. */
+const canAct = canVeto;
+
+// ── Lobby: gather everyone before a live game starts ────────────────────────
+function viewLobby(g) {
+  const mine = myPlayerIn(g);
+  const hostP = g.players.find((p) => p.id === g.host);
+  const isHost = !g.host || !mine || mine === g.host;
+  const crewNotIn = sortCrew(store.list('players').filter((p) => !g.players.some((x) => x.id === p.id)));
+  const onPhone = new Set(g.phones || []);
+  return `
+  <div class="game-top">
+    <span>${g.modeIcon} <b>${esc(g.modeName)}</b> · Lobby</span>
+    <span><button class="icon-btn" data-act="game-menu" aria-label="Game menu">⋯</button></span>
+  </div>
+  <section class="panel lobby">
+    <p class="center muted small">Friends: <b>Play → Join a live game</b>, then enter</p>
+    <div class="join-code">${esc(g.live?.code || '····')}</div>
+    <h2>Players (${g.players.length})</h2>
+    <ul class="players lobby-list">${g.players.map((p) => `<li class="${isMe(p.id) ? 'me' : ''}">
+      <span class="em">${esc(p.emoji)}</span>
+      <b>${esc(p.name)}${isMe(p.id) ? ' <small class="you">you</small>' : ''}<small class="muted"> ${isGuest(p) ? 'guest' : onPhone.has(p.id) ? '📱 joined' : 'added'}${p.id === g.host ? ' · 👑 host' : ''}</small></b>
+      ${isHost && p.id !== mine ? `<button class="btn small bad" data-act="lobby-remove" data-id="${p.id}" aria-label="Remove">✕</button>` : ''}
+    </li>`).join('')}</ul>
+    ${!mine ? `
+      <h3>👋 Which one are you?</h3>
+      <div class="chips">${crewNotIn.map((p) => chip(pname(p), false, 'lobby-iam', { id: p.id })).join('')}
+        ${g.players.filter((p) => !isGuest(p) && !onPhone.has(p.id)).map((p) => chip(pname(p) + ' <small>(listed)</small>', false, 'lobby-iam', { id: p.id })).join('')}</div>
+      <form class="inline-add" data-form="lobby-new-me"><input name="name" placeholder="New: your name" maxlength="24" autocomplete="off"><button class="btn">Join</button></form>` : ''}
+    ${isHost ? `<div class="row"><button class="btn small" data-act="add-to-game" data-as="crew">＋ Crew player</button><button class="btn small" data-act="add-to-game" data-as="guest">＋ Guest</button></div>` : ''}
+  </section>
+  ${isHost
+    ? `<div class="start-bar"><button class="btn primary big" data-act="lobby-start" ${g.players.length ? '' : 'disabled'}>▶️ Start with ${g.players.length} player${g.players.length === 1 ? '' : 's'}</button></div>`
+    : `<p class="center muted">⏳ Waiting for ${hostP ? pname(hostP) : 'the host'} to start…</p>`}`;
+}
+
+/** Put this phone's player into the live game and mark them as joined on a phone. */
+async function lobbyAddMe(p) {
+  await mutate((g) => {
+    if (!g.players.some((x) => x.id === p.id)) g.players.push({ id: p.id, name: p.name, emoji: p.emoji });
+    g.phones = [...new Set([...(g.phones || []), p.id])];
+  });
+  render();
+}
 
 async function makeClaim(type) {
   const cardId = store.game.current.cardId;
@@ -1202,7 +1296,9 @@ async function makeClaim(type) {
     if (!cur || cur.cardId !== cardId || cur.claim) return false;
     const by = myPlayerIn(g);
     cur.claim = { type, by, at: Date.now(), votes: {} };
-    if (by && claimVoters(g).includes(by)) cur.claim.votes[by] = 'yes'; // a teammate claiming counts as their yes
+    // The claim is the claimer's yes. On a shared phone it counts as the yes of the player on turn.
+    const voter = by && claimVoters(g).includes(by) ? by : g.players[g.turn].id;
+    if (claimVoters(g).includes(voter)) cur.claim.votes[voter] = 'yes';
     if (claimOutcome(g) === 'accepted') {
       msg = applyResolution(g, type);
       if (!msg) return false;
@@ -1292,6 +1388,7 @@ async function saveCardForm(form) {
     id: fd.get('id') || uid('c_'), title: fd.get('title').trim(), text: fd.get('text').trim(),
     diff: Number(fd.get('diff')), mins: Number(fd.get('mins')), who: fd.get('who'), tags: fd.getAll('tags'),
     tool, secs: Number(fd.get('secs')), place, author: fd.get('author') || null, needs: fd.getAll('needs'),
+    deck: fd.get('deck') === 'couch' ? 'couch' : 'walk', mix: fd.get('deck') === 'couch' && !!fd.get('mix'),
   }, true);
   if (!card.title || !card.text) { toast('A card needs a title and a challenge'); return; }
   store.put('cards', card);
@@ -1351,6 +1448,11 @@ const actions = {
   },
   'setup-length': ({ v }) => { ui.setup.length = v; renderView(); },
   'setup-confirm': ({ v }) => { ui.setup.confirm = v; renderView(); },
+  'cod-game': ({ id }) => {
+    const s = store.settings; s.codGames = s.codGames || [];
+    s.codGames = s.codGames.includes(id) ? s.codGames.filter((x) => x !== id) : [...s.codGames, id];
+    store.saveSettings(); renderView();
+  },
   'cm-tag': ({ tag }) => {
     const t = ui.setup.custom.tags;
     t[tag] = !t[tag] ? 'any' : t[tag] === 'any' ? 'no' : undefined;
@@ -1374,7 +1476,13 @@ const actions = {
   'draw': async () => {
     let none = false, reshuffled = false;
     await mutate((g) => {
-      if (g.current) return false; // someone already drew
+      if (g.current || g.lobby || !canAct(g)) return false; // someone already drew, or it's not your turn
+      if (g.filter?.deck === 'cod') {
+        const round = codRound(g, store.settings.codGames);
+        if (!round) { none = true; return false; }
+        applyDeal(g, round);
+        return;
+      }
       const res = drawCard(allCards(), g, g.useLocation ? ui.here : null, Math.random, conditions());
       if (!res) { none = true; return false; }
       applyDeal(g, res.card, res.reshuffled);
@@ -1387,11 +1495,36 @@ const actions = {
   'take-card': async ({ id }) => {
     const c = cardById(id);
     if (!c) return;
-    const ok = await mutate((g) => { if (g.current) return false; applyDeal(g, c); });
+    const ok = await mutate((g) => { if (g.current || !canAct(g)) return false; applyDeal(g, c); });
     renderView();
     if (ok) window.scrollTo({ top: 0 });
   },
-  'skip-turn': async () => { await mutate((g) => { if (g.current) return false; g.turn = (g.turn + 1) % g.players.length; }); renderView(); },
+  'skip-turn': async () => { await mutate((g) => { if (g.current || !canAct(g)) return false; g.turn = (g.turn + 1) % g.players.length; }); renderView(); },
+  // Lobby
+  'lobby-iam': async ({ id }) => {
+    const p = store.get('players', id) || store.game.players.find((x) => x.id === id);
+    if (!p) return;
+    if (!store.get('players', id)) store.put('players', { id: p.id, name: p.name, emoji: p.emoji });
+    store.crew().meId = id; store.saveSettings();
+    toast(`⭐ Hi ${p.name}!`);
+    await lobbyAddMe(p);
+  },
+  'lobby-remove': async ({ id }) => {
+    await mutate((g) => { if (!g.lobby) return false; g.players = g.players.filter((p) => p.id !== id); g.phones = (g.phones || []).filter((x) => x !== id); });
+    render();
+  },
+  'lobby-start': async () => {
+    let first = '';
+    const ok = await mutate((g) => {
+      if (!g.lobby || !g.players.length) return false;
+      g.lobby = false;
+      g.startedAt = Date.now(); // time limits count from the real start
+      g.turn = Math.floor(Math.random() * g.players.length);
+      first = g.players[g.turn].name;
+    });
+    if (ok) toast(`▶️ Go! ${first} starts`);
+    render();
+  },
   'pick-partner': async ({ id }) => {
     await mutate((g) => { const c = g.current; if (!c || c.claim) return false; c.partners = c.partners.includes(id) ? c.partners.filter((x) => x !== id) : [...c.partners, id]; });
     renderView();
@@ -1425,6 +1558,20 @@ const actions = {
     resolve('done');
   },
   'resolve-fail': () => resolve('fail'),
+  'i-won': async () => {
+    const mine = myPlayerIn(store.game);
+    if (!mine) return;
+    const ok = await mutate((g) => { if (!g.current || g.current.claim) return false; g.current.winners = [mine]; });
+    if (ok) await resolve('done'); else render();
+  },
+  'team-won': async ({ i }) => {
+    const ok = await mutate((g) => { const t = cardById(g.current?.cardId)?.teams?.[i]; if (!t || g.current.claim) return false; g.current.winners = [...t]; });
+    if (ok) await resolve('done'); else render();
+  },
+  'pick-team': async ({ i }) => {
+    await mutate((g) => { const t = cardById(g.current?.cardId)?.teams?.[i]; if (!t || g.current.claim) return false; g.current.winners = [...t]; });
+    renderView();
+  },
   'vote': ({ id, v }) => vote(id, v),
   'withdraw-claim': async () => {
     const ok = await mutate((g) => { if (!g.current?.claim) return false; delete g.current.claim; });
@@ -1718,6 +1865,12 @@ const formActions = {
   },
   'card': saveCardForm,
   'join-live': (form) => joinLive(form.code.value),
+  'lobby-new-me': async (form) => {
+    const p = await addCrewPlayer(form.name.value);
+    if (!p) return;
+    store.crew().meId = p.id; store.saveSettings();
+    await lobbyAddMe(p);
+  },
   'player': (form) => {
     const fd = new FormData(form);
     const p = store.get('players', fd.get('id'));
@@ -1866,7 +2019,7 @@ async function checkForUpdate({ manual = false } = {}) {
 
 // Every file of the app (keep in step with SHELL in sw.js).
 const APP_FILES = ['./', './index.html', './manifest.webmanifest', './css/app.css', './js/app.js', './js/version.js', './js/config.js',
-  './js/rules.js', './js/store.js', './js/tools.js', './js/live.js', './js/weather.js', './js/data/cards.js', './js/data/places.js', './js/data/lists.js'];
+  './js/rules.js', './js/store.js', './js/tools.js', './js/live.js', './js/weather.js', './js/cod.js', './js/data/cod.js', './js/data/cards.js', './js/data/places.js', './js/data/lists.js'];
 
 /** Did we already try to update to this version a moment ago? Then don't reload again (no loops). */
 function justTriedUpdating(latest) {

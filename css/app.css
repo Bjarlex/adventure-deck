@@ -159,7 +159,7 @@ body.busy [data-act] { opacity: .7; }
 .card.d1 .card-band { background: var(--d1); } .card.d2 .card-band { background: var(--d2); }
 .card.d3 .card-band { background: var(--d3); } .card.d4 .card-band { background: var(--d4); }
 .card h2 { font-size: 1.45rem; margin: 0 0 6px; }
-.card-text { font-size: 1.08rem; margin: 0; }
+.card-text { font-size: 1.08rem; margin: 0; white-space: pre-line; }
 .place-box { margin-top: 12px; padding: 10px; border-radius: 12px; background: var(--surface-2); border: 1px dashed var(--teal); }
 .place-box .row { margin-top: 6px; }
 
@@ -314,3 +314,8 @@ body.busy [data-act] { opacity: .7; }
 .votes .row { margin-top: 0; }
 .vote.yes { color: var(--green); }
 .vote.no { color: var(--red); }
+
+/* ── Lobby and turns ── */
+.lobby .join-code { margin: 4px 0 10px; }
+.lobby-list li b small { font-weight: 500; }
+.deck-btn.waiting-turn { background: var(--surface-2); color: var(--muted); box-shadow: none; border: 2px dashed var(--line); cursor: default; font-size: 1.1rem; }
