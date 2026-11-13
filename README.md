@@ -2,7 +2,7 @@
 
 A challenge card game for walking around Copenhagen with friends. Install it on your phone's home screen. It works offline, and it can share players, highscores and your own cards between your phones.
 
-Version 2.3. The original Koder version is in `v1-original/`.
+Version 2.4. The original Koder version is in `v1-original/`.
 
 ## What's in it
 
@@ -75,11 +75,25 @@ This lets every friend's phone share players, crew cards, switched-off cards and
 4. Open the Worker → **Edit code** → replace everything with the contents of `worker/worker.js` → **Deploy**.
 5. Worker → **Bindings → Add → KV namespace**: variable name `DECK`, pick the `adventure-deck` namespace.
 6. Worker → **Settings → Variables and Secrets**:
-   - **Secret** `CREW_KEY`: a long random phrase you share with your friends (for example four random words).
+   - **Secret** `CREW_KEY`: your **admin key**, a long random phrase. Keep it to yourself; friends get invite codes instead.
    - **Text** `ALLOWED_ORIGIN`: `https://YOUR-USERNAME.github.io` (no path, no trailing slash).
-7. In the app on each phone: **Settings → Crew sync** → server URL `https://adventure-deck.YOUR-SUBDOMAIN.workers.dev`, enter the crew key → **Save & sync**.
+7. Put the Worker URL in `js/config.js` (`DEFAULT_SERVER`) and push. Phones then find the server by themselves.
+8. On your own phone: **Settings → Crews → Crew owner settings** → paste the admin key → **Save**.
 
-Sync happens automatically when the app opens, after a game ends and when cards or players change, and you can also press ⟳ Sync in Records.
+Sync happens automatically when the app opens, after a game ends and when cards or players change, and you can also press ⟳ Sync in Records or Settings.
+
+### Crews and invites
+
+Each crew has its own players, crew cards, switched-off cards, records and live games. A phone can be in several crews and switch between them in **Settings → Crews** (or tap the crew name on the Play screen). There is always a **📱 This phone only** crew that never syncs.
+
+- **Create a crew** (owner only, needs the admin key): Settings → Crews → *Create a crew*. You get an invite code like `Q28SJ6X2-8629S4LQ4NELTJHMNRYV`.
+- **Invite**: tap **✉️ Invite** next to a crew → **Share** (sends a message with the app link and the code) or **Copy**. Members can pass on the code they joined with.
+- **Join**: friends open the app → Settings → Crews → *Join a crew* → paste the code. Each phone gets its own member pass; it never needs the admin key.
+- **Leaked code?** The owner taps ✉️ Invite → **Replace invite code**. The old code stops working, and everyone already in the crew stays in.
+- **The original crew** is called *Main crew*. Phones that used the crew key before 2.4 are moved into it automatically. The owner can make an invite for it like for any other crew.
+- **Leave** removes a crew and its copy from this phone; the crew and its records stay on the server.
+- Invite codes and member passes are stored on the server only as SHA-256 hashes.
+- Switching crews isn't possible while a game is running.
 
 **How records sync:** when a game ends it's saved and synced, and everyone's phone shows the same records.
 

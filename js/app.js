@@ -10,7 +10,8 @@ import {
   leaderboard, topScores, distanceM, bearingDeg, compassLabel, fmtDistance,
   nameKey, isGuest, similarNames, duplicateGroups, mergePlayerInGame,
 } from './rules.js';
-import { store, uid, sync, syncConfigured, scheduleSync, photos, compressImage } from './store.js';
+import { store, uid, sync, syncConfigured, scheduleSync, photos, compressImage, canSync, isAdmin, crewsApi, MAIN } from './store.js';
+import { DEFAULT_SERVER } from './config.js';
 import { renderTool, toolOp, tickClock, fmtClock } from './tools.js';
 import { live, normaliseCode } from './live.js';
 
@@ -140,8 +141,8 @@ function setupGameDraft() {
 }
 
 /** The crew player this phone belongs to (set in Settings or on the Play screen). */
-const me = () => store.get('players', store.settings.meId);
-const isMe = (id) => !!id && id === store.settings.meId;
+const me = () => store.get('players', store.crew().meId);
+const isMe = (id) => !!id && id === store.crew().meId;
 const sortCrew = (list) => list.sort((a, b) => (isMe(b.id) - isMe(a.id)) || a.name.localeCompare(b.name));
 
 function viewSetup() {
@@ -157,6 +158,7 @@ function viewSetup() {
   return `
   <header class="hero">
     <h1>Copenhagen<br>Adventure Deck</h1>
+    <button class="crew-chip" data-act="goto-crews">${store.crew().local ? '📱' : '☁️'} ${esc(store.crew().name)} <small>change</small></button>
     <p class="muted">${allCards().length} cards in the deck · ${store.list('games').length} games played</p>
   </header>
 
@@ -548,24 +550,15 @@ function viewSettings() {
   const s = store.settings;
   const crew = sortCrew(store.list('players'));
   return `<header class="page-head"><h1>Settings</h1></header>
+  ${crewsPanel()}
   <section class="panel">
-    <h2>⭐ You on this phone</h2>
+    <h2>⭐ You in ${esc(store.crew().name)}</h2>
     ${crew.length ? `<select class="search" data-act-change="set-me-select">
       <option value="">Not set</option>
       ${crew.map((p) => `<option value="${p.id}" ${isMe(p.id) ? 'selected' : ''}>${esc(p.emoji)} ${esc(p.name)}</option>`).join('')}
     </select>
     <p class="muted small">Picked automatically for new games. You also get "Your turn!" in live games and are highlighted in the records. Only this phone knows, and it isn't synced.</p>`
     : '<p class="muted small">Add yourself as a crew player on the Play screen first.</p>'}
-  </section>
-  <section class="panel">
-    <h2>Crew sync</h2>
-    <p class="muted small">Share players, crew cards, switched-off cards and finished games between your phones, through your own Cloudflare Worker (see the README). Without it, everything stays on this phone.</p>
-    <form data-form="sync" class="editor">
-      <label>Server URL<input name="apiUrl" type="url" inputmode="url" placeholder="https://adventure-deck.yourname.workers.dev" value="${esc(s.apiUrl)}" autocomplete="off"></label>
-      <label>Crew key<input name="crewKey" type="password" placeholder="The shared secret for your crew" value="${esc(s.crewKey)}" autocomplete="off"></label>
-      <div class="row"><button class="btn primary">Save & sync</button>${syncConfigured() ? '<button class="btn" type="button" data-act="sync-now">Sync now</button>' : ''}</div>
-    </form>
-    <p class="small ${s.syncError ? 'warn' : 'muted'}">${!syncConfigured() ? 'Not set up.' : s.syncError ? `⚠️ ${esc(s.syncError)}` : s.lastSync ? `✓ Last synced ${new Date(s.lastSync).toLocaleString()}` : 'Not synced yet.'}</p>
   </section>
   <section class="panel">
     <h2>Location</h2>
@@ -593,8 +586,89 @@ function viewSettings() {
   ${rulesBlock()}
   <section class="panel">
     <h2>Danger zone</h2>
-    <button class="btn bad" data-act="reset-all">Delete all data on this phone</button>
+    <button class="btn bad" data-act="reset-all">Delete ${esc(store.crew().name)}'s data on this phone</button>
+    <p class="muted small">${store.crew().local ? 'This crew only exists on this phone, so this can\'t be undone.' : 'The crew server keeps its copy; it comes back on the next sync.'}</p>
   </section>`;
+}
+
+function crewStatus(c) {
+  if (c.local) return '📱 Only on this phone';
+  if (!canSync(c)) return '⚠️ Not signed in. Join again with an invite';
+  const role = c.token ? 'Member' : '👑 Owner';
+  if (c.syncError) return `${role} · ⚠️ ${esc(c.syncError)}`;
+  return `${role} · ${c.lastSync ? `synced ${new Date(c.lastSync).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}` : 'not synced yet'}`;
+}
+
+function crewsPanel() {
+  const s = store.settings, active = store.crew();
+  return `<section class="panel crews-panel">
+    <h2>👥 Crews</h2>
+    <p class="muted small">Each crew has its own players, cards, records and live games. You can be in several and switch between them.</p>
+    <ul class="crew-list">${store.crews().map((c) => `
+      <li class="${c.id === active.id ? 'on' : ''}">
+        <div class="crew-name"><b>${c.local ? '📱' : '☁️'} ${esc(c.name)}</b><small>${crewStatus(c)}</small></div>
+        <div class="row">
+          ${c.id === active.id ? '<span class="badge ok">Playing</span>' : `<button class="btn small" data-act="switch-crew" data-id="${c.id}">Switch</button>`}
+          ${!c.local && (c.invite || (c.admin && isAdmin())) ? `<button class="btn small" data-act="invite-crew" data-id="${c.id}">✉️ Invite</button>` : ''}
+          ${!c.local && c.id !== active.id ? `<button class="btn small bad" data-act="leave-crew" data-id="${c.id}">Leave</button>` : ''}
+        </div>
+      </li>`).join('')}
+    </ul>
+    ${canSync() ? '<button class="btn small" data-act="sync-now">⟳ Sync now</button>' : ''}
+    <h3>Join a crew</h3>
+    <form class="inline-add" data-form="join-crew">
+      <input name="invite" placeholder="Invite code" autocapitalize="characters" autocomplete="off" spellcheck="false" class="code-input small-code">
+      <button class="btn primary">Join</button>
+    </form>
+    ${isAdmin() ? `
+    <h3>👑 Create a crew</h3>
+    <form class="inline-add" data-form="create-crew">
+      <input name="name" placeholder="e.g. Nørrebro gang" maxlength="40" autocomplete="off">
+      <button class="btn">Create</button>
+    </form>
+    <button class="btn small" data-act="server-crews">All crews on the server</button>` : ''}
+    <details class="advanced">
+      <summary>Crew owner settings</summary>
+      <form data-form="admin" class="editor">
+        <label>Admin key <small class="muted">(CREW_KEY in Cloudflare; only the owner has it)</small>
+          <input name="adminKey" type="password" placeholder="${isAdmin() ? 'Saved. Type to replace' : 'Paste your admin key'}" autocomplete="off"></label>
+        <label>Server URL <small class="muted">(leave empty for the default)</small>
+          <input name="apiUrl" type="url" inputmode="url" placeholder="${esc(DEFAULT_SERVER)}" value="${esc(s.apiUrl)}" autocomplete="off"></label>
+        <div class="row"><button class="btn primary">Save</button>${isAdmin() ? '<button type="button" class="btn small bad" data-act="forget-admin">Forget admin key</button>' : ''}</div>
+      </form>
+    </details>
+  </section>`;
+}
+
+function sheetInvite(id) {
+  const c = store.crews().find((x) => x.id === id);
+  if (!c) return '<p>Crew not found.</p>';
+  const appUrl = location.origin + location.pathname;
+  return `<h2>✉️ Invite to ${esc(c.name)}</h2>
+    ${c.invite ? `
+      <p class="center small">Friends open the deck, go to <b>Settings → Crews → Join a crew</b> and paste:</p>
+      <div class="invite-code" data-copy="${esc(c.invite)}">${esc(c.invite)}</div>
+      <div class="row center">
+        <button class="btn primary" data-act="share-invite" data-id="${c.id}">📤 Share</button>
+        <button class="btn" data-act="copy-invite" data-id="${c.id}">📋 Copy</button>
+      </div>
+      <p class="muted small center">App: ${esc(appUrl)}</p>`
+    : '<p class="muted">There is no invite code on this phone for this crew yet.</p>'}
+    ${c.admin && isAdmin() ? `
+      <h3>New invite code</h3>
+      <p class="muted small">${c.invite ? 'If the code got into the wrong hands: make a new one. The old code stops working, but everyone already in the crew stays in.' : 'Make the first invite code for this crew.'}</p>
+      <button class="btn ${c.invite ? 'bad small' : 'primary'}" data-act="new-invite" data-id="${c.id}">${c.invite ? '♻️ Replace invite code' : '✨ Make an invite code'}</button>`
+    : c.invite ? '<p class="muted small">This is the code you joined with. If the owner has replaced it since, ask them for the new one.</p>' : ''}
+    <div class="col"><button class="btn" data-act="close-sheet">Close</button></div>`;
+}
+
+function sheetServerCrews(list) {
+  if (!list) return '<h2>Crews on the server</h2><p class="muted">Loading…</p>';
+  const here = new Set(store.crews().map((c) => c.id));
+  return `<h2>👑 Crews on the server</h2>
+    <ul class="crew-list">${list.map((c) => `<li><div class="crew-name"><b>☁️ ${esc(c.name)}</b><small>${c.members} member pass${c.members === 1 ? '' : 'es'}${c.id === MAIN ? ' · the original crew' : ''}</small></div>
+      <div class="row">${here.has(c.id) ? '<span class="badge">On this phone</span>' : `<button class="btn small" data-act="add-server-crew" data-id="${c.id}" data-name="${esc(c.name)}">Add to this phone</button>`}</div></li>`).join('')}</ul>
+    <div class="col"><button class="btn" data-act="close-sheet">Close</button></div>`;
 }
 
 // ── Sheets (modals) ─────────────────────────────────────────────────────────
@@ -609,6 +683,8 @@ function renderSheet() {
   if (s.type === 'player') body = sheetPlayer(store.get('players', s.id));
   if (s.type === 'menu') body = sheetMenu();
   if (s.type === 'live') body = sheetLive();
+  if (s.type === 'invite') body = sheetInvite(s.id);
+  if (s.type === 'server-crews') body = sheetServerCrews(s.list);
   if (s.type === 'tools') body = `<h2>Tools</h2><div class="tool-grid">${Object.entries(TOOLS).map(([k, x]) => `<button class="${ui.freeTool === k ? 'on' : ''}" data-act="free-tool" data-v="${k}"><span>${x.icon}</span>${x.label}</button>`).join('')}</div>
     ${renderTool(ui.freeTool, toolState('free', ui.freeTool), { scope: 'free', players: store.game?.players || [] })}<div class="row"><button class="btn" data-act="close-sheet">Close</button></div>`;
   el.className = 'open';
@@ -769,7 +845,7 @@ function mergePlayers(fromId, toId) {
     if (updated) { store.put('games', updated); n++; }
   }
   store.remove('players', fromId);
-  if (store.settings.meId === fromId) { store.settings.meId = toId; store.saveSettings(); }
+  if (store.crew().meId === fromId) { store.crew().meId = toId; store.saveSettings(); }
   ui.setup.playerIds = [...new Set(ui.setup.playerIds.map((id) => (id === fromId ? toId : id)))];
   return n;
 }
@@ -1204,7 +1280,7 @@ const actions = {
   'set-me': ({ id }) => {
     const p = store.get('players', id);
     if (!p) return;
-    store.settings.meId = id; store.saveSettings();
+    store.crew().meId = id; store.saveSettings();
     if (!store.game && !ui.setup.playerIds.includes(id)) ui.setup.playerIds.push(id);
     toast(`⭐ Hi ${p.name}! This phone knows it's you`);
     if (ui.sheet?.type === 'player') ui.sheet = null;
@@ -1241,6 +1317,46 @@ const actions = {
   },
   'live-info': () => { ui.sheet = { type: 'live' }; renderSheet(); },
   'check-update': () => checkForUpdate({ manual: true }),
+  // Crews
+  'goto-crews': () => { ui.tab = 'settings'; render(); window.scrollTo({ top: 0 }); },
+  'switch-crew': ({ id }) => switchCrew(id),
+  'invite-crew': ({ id }) => { ui.sheet = { type: 'invite', id }; renderSheet(); },
+  'new-invite': async ({ id }) => {
+    const c = store.crews().find((x) => x.id === id);
+    if (c?.invite && !confirm('Replace the invite code? The old code stops working. Everyone already in the crew stays in.')) return;
+    try { await crewsApi.newInvite(id); toast('✨ New invite code ready'); } catch (e) { toast('⚠️ ' + e.message); }
+    renderSheet(); renderView();
+  },
+  'copy-invite': async ({ id }) => {
+    const c = store.crews().find((x) => x.id === id);
+    try { await navigator.clipboard.writeText(c.invite); toast('📋 Copied'); } catch { toast('Copy failed: press and hold the code to copy it'); }
+  },
+  'share-invite': async ({ id }) => {
+    const c = store.crews().find((x) => x.id === id);
+    const text = `Join "${c.name}" in Copenhagen Adventure Deck!\n1. Open ${location.origin + location.pathname} in Safari and add it to your home screen.\n2. Open it from the home screen → Settings → Crews → Join a crew.\n3. Paste this code: ${c.invite}`;
+    try {
+      if (navigator.share) await navigator.share({ text });
+      else { await navigator.clipboard.writeText(text); toast('📋 Invite message copied'); }
+    } catch { /* share sheet closed */ }
+  },
+  'leave-crew': ({ id }) => {
+    const c = store.crews().find((x) => x.id === id);
+    if (!c || !confirm(`Remove "${c.name}" from this phone?\n\nThe crew and its records stay on the server for everyone else. You can join again with an invite code.`)) return;
+    store.removeCrew(id); toast(`👋 Left ${c.name} on this phone`); renderView();
+  },
+  'server-crews': async () => {
+    ui.sheet = { type: 'server-crews', list: null }; renderSheet();
+    try { ui.sheet = { type: 'server-crews', list: await crewsApi.list() }; } catch (e) { ui.sheet = null; toast('⚠️ ' + e.message); }
+    renderSheet();
+  },
+  'add-server-crew': ({ id, name }) => {
+    store.addCrew({ id, name, admin: true });
+    ui.sheet = null; toast(`☁️ ${name} added. Switch to it to play`); render();
+  },
+  'forget-admin': () => {
+    if (!confirm('Forget the admin key on this phone? Crews you joined with an invite keep working.')) return;
+    store.settings.adminKey = ''; store.saveSettings(); toast('Admin key forgotten'); renderView();
+  },
   'apply-update': () => applyUpdate(),
   'go-live': async () => {
     const code = await goLive();
@@ -1305,13 +1421,13 @@ const actions = {
       : `Delete ${p?.name} for everyone in the crew?`;
     if (!confirm(msg)) return;
     store.remove('players', id);
-    if (store.settings.meId === id) { store.settings.meId = ''; store.saveSettings(); }
+    if (store.crew().meId === id) { store.crew().meId = ''; store.saveSettings(); }
     ui.setup.playerIds = ui.setup.playerIds.filter((x) => x !== id); ui.sheet = null; render();
   },
   // Settings
   'sync-now': async () => {
     toast('⟳ Syncing…');
-    try { const r = await sync(); toast(r.changed ? `✓ Synced, ${r.changed} update${r.changed === 1 ? '' : 's'}` : '✓ Up to date'); } catch (e) { toast('⚠️ ' + store.settings.syncError); }
+    try { const r = await sync(); toast(r.changed ? `✓ Synced, ${r.changed} update${r.changed === 1 ? '' : 's'}` : '✓ Up to date'); } catch (e) { toast('⚠️ ' + e.message); }
     renderView();
   },
   'export': () => {
@@ -1334,7 +1450,7 @@ const changeActions = {
   'setup-live': (el) => { ui.setup.live = el.checked; renderView(); },
   'set-me-select': (el) => {
     if (el.value) return actions['set-me']({ id: el.value });
-    store.settings.meId = ''; store.saveSettings(); toast('This phone no longer knows who you are'); renderView();
+    store.crew().meId = ''; store.saveSettings(); toast('This phone no longer knows who you are'); renderView();
   },
   'range': async (el) => {
     store.settings.range = Number(el.value); store.saveSettings();
@@ -1405,15 +1521,64 @@ const formActions = {
     store.put('players', { ...p, name, emoji: fd.get('emoji') || p.emoji });
     ui.sheet = null; render();
   },
-  'sync': async (form) => {
+  'join-crew': async (form) => {
+    const code = form.invite.value.trim();
+    if (!code) return;
+    try {
+      const c = await crewsApi.join(code);
+      toast(`🎉 You're in ${c.name}!`);
+      form.invite.value = '';
+      if (!store.game) await switchCrew(c.id, { quiet: true }); else renderView();
+    } catch (e) { toast('⚠️ ' + e.message); }
+  },
+  'create-crew': async (form) => {
+    const name = form.name.value.trim();
+    if (!name) return;
+    try {
+      const c = await crewsApi.create(name);
+      form.name.value = '';
+      ui.sheet = { type: 'invite', id: c.id };
+      toast(`👥 ${c.name} created`);
+      render();
+    } catch (e) { toast('⚠️ ' + e.message); }
+  },
+  'admin': async (form) => {
     const url = form.apiUrl.value.trim().replace(/\/+$/, '');
     if (url && !/^https:\/\//.test(url)) { toast('The server URL must start with https://'); return; }
-    if (url !== store.settings.apiUrl) store.settings.lastPush = 0; // new server: push everything
-    Object.assign(store.settings, { apiUrl: url, crewKey: form.crewKey.value.trim(), syncError: '' });
+    const key = form.adminKey.value.trim();
+    const before = { apiUrl: store.settings.apiUrl, adminKey: store.settings.adminKey };
+    Object.assign(store.settings, { apiUrl: url }, key ? { adminKey: key } : {});
+    if (key) {
+      // Check the key before keeping it.
+      try { await crewsApi.list(); } catch (e) {
+        Object.assign(store.settings, before);
+        toast(e.status === 401 ? '⚠️ That admin key is wrong' : '⚠️ ' + e.message);
+        return;
+      }
+      // The original crew is the owner's: make sure it's on this phone.
+      if (!store.crews().some((c) => c.id === MAIN)) store.addCrew({ id: MAIN, name: 'Main crew', admin: true });
+      else store.addCrew({ id: MAIN, admin: true });
+    }
+    if (url !== before.apiUrl) for (const c of store.crews()) c.lastPush = 0; // new server: push everything
     store.saveSettings();
-    if (syncConfigured()) await actions['sync-now'](); else { toast('Sync switched off'); renderView(); }
+    form.adminKey.value = '';
+    toast(key ? '👑 Admin key saved' : 'Saved');
+    renderView();
   },
 };
+
+/** Switch the phone to another crew: its own players, records and live games. */
+async function switchCrew(id, { quiet = false } = {}) {
+  if (store.game) { toast('Finish or leave the running game first'); return; }
+  try { store.switchCrew(id); } catch (e) { toast('⚠️ ' + e.message); return; }
+  Object.assign(ui.setup, { playerIds: [], guests: [] });
+  ui.summaryId = null; ui.sheet = null; ui.joinCode = '';
+  if (!quiet) toast(`👥 Now playing in ${store.crew().name}`);
+  render();
+  if (canSync()) { try { await sync(); } catch {} }
+  if (me()) ui.setup.playerIds = [store.crew().meId];
+  render();
+}
 
 document.addEventListener('click', (e) => {
   const tab = e.target.closest('.tabs button');
@@ -1491,7 +1656,7 @@ async function checkForUpdate({ manual = false } = {}) {
 }
 
 // Every file of the app (keep in step with SHELL in sw.js).
-const APP_FILES = ['./', './index.html', './manifest.webmanifest', './css/app.css', './js/app.js', './js/version.js',
+const APP_FILES = ['./', './index.html', './manifest.webmanifest', './css/app.css', './js/app.js', './js/version.js', './js/config.js',
   './js/rules.js', './js/store.js', './js/tools.js', './js/live.js', './js/data/cards.js', './js/data/places.js', './js/data/lists.js'];
 
 /** Did we already try to update to this version a moment ago? Then don't reload again (no loops). */
@@ -1536,7 +1701,7 @@ if (!store.game && store.list('players').length) {
   if (last) ui.setup.playerIds = last.players.map((p) => p.id).filter((id) => store.get('players', id));
 }
 // You are always picked on your own phone.
-if (me() && !ui.setup.playerIds.includes(store.settings.meId)) ui.setup.playerIds.unshift(store.settings.meId);
+if (me() && !ui.setup.playerIds.includes(store.crew().meId)) ui.setup.playerIds.unshift(store.crew().meId);
 render();
 autoSync();
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('./sw.js').catch(() => {});

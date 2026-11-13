@@ -2,19 +2,18 @@
 // The game state itself is computed on the phones (rules.js); the server only stores it and
 // makes sure changes are applied one at a time (version numbers).
 
-import { store } from './store.js';
+import { apiUrl, authHeaders } from './store.js';
 
 export class LiveError extends Error {
   constructor(message, status, body) { super(message); this.status = status; this.body = body; }
 }
 
 async function call(method, path, body) {
-  const s = store.settings;
   let res;
   try {
-    res = await fetch(s.apiUrl.replace(/\/+$/, '') + '/api/live' + path, {
+    res = await fetch(apiUrl() + '/api/live' + path, {
       method,
-      headers: { 'content-type': 'application/json', 'x-crew-key': s.crewKey },
+      headers: { 'content-type': 'application/json', ...authHeaders() }, // live games belong to the current crew
       body: body ? JSON.stringify(body) : undefined,
       cache: 'no-store',
     });

@@ -210,7 +210,8 @@ test('merging when both copies played the same game adds them up', () => {
 // ── Worker ──
 function mockKV() {
   const m = new Map(); let writes = 0;
-  return { get: async (k, t) => (m.has(k) ? (t === 'json' ? JSON.parse(m.get(k)) : m.get(k)) : null), put: async (k, v) => { writes++; m.set(k, v); }, writes: () => writes };
+  return { get: async (k, t) => (m.has(k) ? (t === 'json' ? JSON.parse(m.get(k)) : m.get(k)) : null), put: async (k, v) => { writes++; m.set(k, v); }, writes: () => writes,
+    list: async ({ prefix }) => ({ keys: [...m.keys()].filter((k) => k.startsWith(prefix)).map((name) => ({ name })) }), raw: m };
 }
 const env = () => ({ DECK: mockKV(), CREW_KEY: 'secret-key', ALLOWED_ORIGIN: 'https://friend.github.io' });
 // Browsers forbid setting the Origin header on a real Request, so use a request-shaped object
@@ -257,13 +258,14 @@ function mockD1() {
       bind: (...a) => { args = a; return api; },
       async run() {
         if (s.startsWith('CREATE TABLE')) return { meta: { changes: 0 } };
+        if (s.startsWith('ALTER TABLE')) throw new Error('duplicate column name: crew');
         if (s.startsWith('DELETE FROM live_games WHERE updated_at')) { let n = 0; for (const [k, r] of rows) if (r.updated_at < args[0]) { rows.delete(k); n++; } return { meta: { changes: n } }; }
-        if (s.startsWith('INSERT OR IGNORE')) { const [code, state, now] = args; if (rows.has(code)) return { meta: { changes: 0 } }; rows.set(code, { version: 1, state, updated_at: now }); return { meta: { changes: 1 } }; }
-        if (s.startsWith('UPDATE live_games')) { const [state, now, code, base] = args; const r = rows.get(code); if (!r || r.version !== base) return { meta: { changes: 0 } }; Object.assign(r, { state, version: r.version + 1, updated_at: now }); return { meta: { changes: 1 } }; }
-        if (s.startsWith('DELETE FROM live_games WHERE code')) { rows.delete(args[0]); return { meta: { changes: 1 } }; }
+        if (s.startsWith('INSERT OR IGNORE')) { const [code, state, now, crew] = args; if (rows.has(code)) return { meta: { changes: 0 } }; rows.set(code, { version: 1, state, updated_at: now, crew }); return { meta: { changes: 1 } }; }
+        if (s.startsWith('UPDATE live_games')) { const [state, now, code, base, crew] = args; const r = rows.get(code); if (!r || r.version !== base || r.crew !== crew) return { meta: { changes: 0 } }; Object.assign(r, { state, version: r.version + 1, updated_at: now }); return { meta: { changes: 1 } }; }
+        if (s.startsWith('DELETE FROM live_games WHERE code')) { const r = rows.get(args[0]); if (r && r.crew === args[1]) rows.delete(args[0]); return { meta: { changes: 1 } }; }
         throw new Error('unexpected SQL: ' + s);
       },
-      async first() { if (s.startsWith('SELECT')) { const r = rows.get(args[0]); return r ? { ...r } : null; } throw new Error('unexpected SQL: ' + s); },
+      async first() { if (s.startsWith('SELECT')) { const r = rows.get(args[0]); return r && r.crew === args[1] ? { ...r } : null; } throw new Error('unexpected SQL: ' + s); },
     };
     return api;
   };
@@ -318,6 +320,118 @@ await atest('live: old games are cleaned up when a new one starts', async () => 
   e.GAMES.rows.set('OLDY', { version: 3, state: '{}', updated_at: Date.now() - 4 * 86400000 });
   await liveCall(e, 'POST', '', { state: {} });
   ok(!e.GAMES.rows.has('OLDY'));
+});
+
+// ── Worker: crews ──
+const ADMIN = { 'x-crew-key': 'secret-key' };
+const req = (e, method, path, body, headers = {}) => worker.fetch(fakeReq('https://deck.example.workers.dev' + path,
+  { method, headers: { 'content-type': 'application/json', origin: 'https://friend.github.io', ...headers }, body: body ? JSON.stringify(body) : undefined }), e);
+const memberOf = (crew, token) => ({ 'x-crew-id': crew, 'x-member-token': token });
+
+await atest('crews: only the owner can create or list crews', async () => {
+  const e = liveEnv();
+  eq((await req(e, 'POST', '/api/crews', { name: 'X' })).status, 401, 'no auth');
+  eq((await req(e, 'POST', '/api/crews', { name: 'X' }, { 'x-crew-key': 'wrong' })).status, 401, 'wrong key');
+  const r = await req(e, 'POST', '/api/crews', { name: 'Nørrebro gang' }, ADMIN);
+  eq(r.status, 201);
+  const c = await r.json();
+  ok(/^[A-Z2-9]{8}$/.test(c.id), `id ${c.id}`); ok(c.invite.startsWith(c.id + '-') && c.invite.length === 29, `invite ${c.invite}`);
+  const { token } = await (await req(e, 'POST', '/api/join', { invite: c.invite })).json();
+  eq((await req(e, 'POST', '/api/crews', { name: 'Y' }, memberOf(c.id, token))).status, 401, 'members cannot create crews');
+  const list = await (await req(e, 'GET', '/api/crews', null, ADMIN)).json();
+  eq(list.map((x) => x.name), ['Main crew', 'Nørrebro gang']);
+  eq(list[1].members, 1);
+});
+await atest('crews: secrets are only stored hashed', async () => {
+  const e = liveEnv();
+  const c = await (await req(e, 'POST', '/api/crews', { name: 'A' }, ADMIN)).json();
+  const { token } = await (await req(e, 'POST', '/api/join', { invite: c.invite })).json();
+  const stored = e.DECK.raw.get(`crew:meta:${c.id}`);
+  ok(!stored.includes(c.invite.split('-')[1]) && !stored.includes(token), 'plain secret found in storage');
+});
+await atest('crews: joining needs a valid invite (any case)', async () => {
+  const e = liveEnv();
+  const c = await (await req(e, 'POST', '/api/crews', { name: 'A' }, ADMIN)).json();
+  eq((await req(e, 'POST', '/api/join', { invite: 'nonsense' })).status, 400);
+  eq((await req(e, 'POST', '/api/join', { invite: c.id + '-' + 'A'.repeat(20) })).status, 401);
+  const r = await req(e, 'POST', '/api/join', { invite: c.invite.toLowerCase() });
+  eq(r.status, 200);
+  eq((await r.json()).crew.name, 'A');
+});
+await atest('crews: records are separate per crew', async () => {
+  const e = liveEnv();
+  const c = await (await req(e, 'POST', '/api/crews', { name: 'A' }, ADMIN)).json();
+  const { token } = await (await req(e, 'POST', '/api/join', { invite: c.invite })).json();
+  await req(e, 'POST', '/api/sync', { players: [{ id: 'p_main', name: 'Main person', updatedAt: 1 }] }, ADMIN);
+  await req(e, 'POST', '/api/sync', { players: [{ id: 'p_a', name: 'Crew A person', updatedAt: 1 }] }, memberOf(c.id, token));
+  const main = await (await req(e, 'POST', '/api/sync', {}, ADMIN)).json();
+  const a = await (await req(e, 'POST', '/api/sync', {}, memberOf(c.id, token))).json();
+  eq(main.players.map((p) => p.id), ['p_main']);
+  eq(a.players.map((p) => p.id), ['p_a']);
+  const adminInA = await (await req(e, 'POST', '/api/sync', {}, { ...ADMIN, 'x-crew-id': c.id })).json();
+  eq(adminInA.players.map((p) => p.id), ['p_a'], 'owner can open any crew');
+});
+await atest('crews: a member pass only works for its own crew', async () => {
+  const e = liveEnv();
+  const a = await (await req(e, 'POST', '/api/crews', { name: 'A' }, ADMIN)).json();
+  const b = await (await req(e, 'POST', '/api/crews', { name: 'B' }, ADMIN)).json();
+  const { token } = await (await req(e, 'POST', '/api/join', { invite: a.invite })).json();
+  eq((await req(e, 'POST', '/api/sync', {}, memberOf(b.id, token))).status, 401);
+  eq((await req(e, 'POST', '/api/sync', {}, memberOf('main', token))).status, 401);
+  eq((await req(e, 'POST', '/api/sync', {}, memberOf(a.id, 'X'.repeat(32)))).status, 401, 'made-up pass');
+});
+await atest('crews: a new invite stops the old code but keeps members in', async () => {
+  const e = liveEnv();
+  const c = await (await req(e, 'POST', '/api/crews', { name: 'A' }, ADMIN)).json();
+  const { token } = await (await req(e, 'POST', '/api/join', { invite: c.invite })).json();
+  const fresh = await (await req(e, 'POST', `/api/crews/${c.id}/invite`, {}, ADMIN)).json();
+  ok(fresh.invite !== c.invite);
+  eq((await req(e, 'POST', '/api/join', { invite: c.invite })).status, 401, 'old invite');
+  eq((await req(e, 'POST', '/api/join', { invite: fresh.invite })).status, 200, 'new invite');
+  eq((await req(e, 'POST', '/api/sync', {}, memberOf(c.id, token))).status, 200, 'existing member still in');
+});
+await atest('crews: the original crew can get an invite too', async () => {
+  const e = liveEnv();
+  await req(e, 'POST', '/api/sync', { players: [{ id: 'p_1', name: 'Old', updatedAt: 1 }] }, ADMIN);
+  const inv = await (await req(e, 'POST', '/api/crews/main/invite', { name: 'The originals' }, ADMIN)).json();
+  ok(inv.invite.startsWith('main-'));
+  const j = await (await req(e, 'POST', '/api/join', { invite: inv.invite })).json();
+  eq(j.crew, { id: 'main', name: 'The originals' });
+  const doc = await (await req(e, 'POST', '/api/sync', {}, memberOf('main', j.token))).json();
+  eq(doc.players.map((p) => p.id), ['p_1'], 'member sees the existing main records');
+});
+await atest('crews: live games are invisible to other crews', async () => {
+  const e = liveEnv();
+  const a = await (await req(e, 'POST', '/api/crews', { name: 'A' }, ADMIN)).json();
+  const { token } = await (await req(e, 'POST', '/api/join', { invite: a.invite })).json();
+  const { code } = await (await req(e, 'POST', '/api/live', { state: { x: 1 } }, memberOf(a.id, token))).json();
+  eq((await req(e, 'GET', `/api/live/${code}`, null, memberOf(a.id, token))).status, 200, 'same crew');
+  eq((await req(e, 'GET', `/api/live/${code}`, null, ADMIN)).status, 404, 'main crew cannot see it');
+  eq((await req(e, 'PUT', `/api/live/${code}`, { baseVersion: 1, state: { hijack: true } }, ADMIN)).status, 404, 'main crew cannot change it');
+  const back = await (await req(e, 'GET', `/api/live/${code}`, null, memberOf(a.id, token))).json();
+  eq(back.state, { x: 1 });
+});
+
+// ── App: moving settings from earlier versions ──
+const { migrateSettings } = await import('../js/store.js');
+test('migration: a phone that synced becomes owner of the main crew, data stays put', () => {
+  const s = migrateSettings({ range: 800, apiUrl: 'https://adventure-deck.bjarkeapihl.workers.dev', crewKey: 'k', lastPush: 5, lastSync: 6, meId: 'p_me' });
+  eq(s.adminKey, 'k'); eq(s.apiUrl, '', 'default server need not be stored'); eq(s.range, 800);
+  eq(s.activeCrew, 'main');
+  const main = s.crews.find((c) => c.id === 'main'), local = s.crews.find((c) => c.local);
+  eq([main.dataKey, main.admin, main.meId, main.lastPush], ['cad.data.v1', true, 'p_me', 5]);
+  eq(local.dataKey, 'cad.data.v1:local');
+  ok(!('crewKey' in s) && !('meId' in s));
+});
+test('migration: a phone without sync keeps its data as "This phone only"', () => {
+  const s = migrateSettings({ apiUrl: '', crewKey: '', meId: 'p_x' });
+  eq(s.crews.map((c) => [c.id, c.dataKey, c.meId]), [['local', 'cad.data.v1', 'p_x']]);
+  eq(s.activeCrew, 'local');
+});
+test('migration: running it again changes nothing', () => {
+  const once = migrateSettings({ apiUrl: 'https://custom.example', crewKey: 'k' });
+  eq(migrateSettings(structuredClone(once)), once);
+  eq(once.apiUrl, 'https://custom.example', 'custom servers are kept');
 });
 
 // ── Report ──
