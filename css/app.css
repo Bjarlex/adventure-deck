@@ -279,6 +279,11 @@ body.busy [data-act] { opacity: .7; }
 .sheet::before { content: ''; display: block; width: 40px; height: 5px; border-radius: 3px; background: var(--line); margin: -6px auto 12px; }
 @keyframes up { from { transform: translateY(40px); opacity: 0; } }
 @keyframes fade { from { opacity: 0; } }
+#update-banner {
+  position: sticky; top: 0; z-index: 15; display: flex; justify-content: center; align-items: center; gap: 10px;
+  padding: calc(8px + env(safe-area-inset-top)) 12px 8px; margin-top: calc(-1 * env(safe-area-inset-top));
+  background: var(--teal); color: #fff; font-weight: 700; font-size: .92rem;
+}
 #toast {
   position: fixed; left: 50%; bottom: calc(var(--tabs-h) + env(safe-area-inset-bottom) + 16px); transform: translate(-50%, 20px);
   background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 999px; font-weight: 600; font-size: .92rem;

@@ -2,7 +2,7 @@
 
 A challenge card game for walking around Copenhagen with friends. Install it on your phone's home screen. It works offline, and it can share players, highscores and your own cards between your phones.
 
-Version 2.2. The original Koder version is in `v1-original/`.
+Version 2.3. The original Koder version is in `v1-original/`.
 
 ## What's in it
 
@@ -57,7 +57,7 @@ Use your **personal** GitHub account. GitHub Pages is free for public repos. Not
 3. On GitHub: **Settings → Pages → Build and deployment → Deploy from a branch → `main` / `(root)` → Save**.
 4. After a minute the app is live at `https://YOUR-USERNAME.github.io/adventure-deck/`.
 
-From then on, `git push` updates the app. Phones pick up the new version the next time the app is opened (it loads from cache first and refreshes in the background, so occasionally it takes two launches).
+From then on, `git push` updates the app. **Bump the version in `js/version.js` with every release**: each time the app is opened or brought back from the background, it compares its version with the one on GitHub. If they differ it updates itself straight away, or shows an "Update now" banner if a game is running. Settings → App version also has a **Check for updates** button.
 
 ### 2. Install on the iPhone
 
@@ -114,7 +114,7 @@ To play: when starting a game, keep **📡 Share this game live** on. The code a
 - **Spots:** `js/data/places.js`. Coordinates are approximate (about ±50 m), which is fine for a 500–1000 m radius. Fix any that are off.
 - **Penances, bingo sounds, debate topics, tarot, stations:** `js/data/lists.js`.
 - **Rules and modes:** `js/rules.js`.
-- After changing the list of files, bump `CACHE` in `sw.js`.
+- If you add or remove a file, update `SHELL` in `sw.js` and `APP_FILES` in `js/app.js`.
 
 ## Running locally
 

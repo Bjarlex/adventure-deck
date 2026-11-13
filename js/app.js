@@ -14,7 +14,7 @@ import { store, uid, sync, syncConfigured, scheduleSync, photos, compressImage }
 import { renderTool, toolOp, tickClock, fmtClock } from './tools.js';
 import { live, normaliseCode } from './live.js';
 
-const VERSION = '2.2.1';
+import { VERSION } from './version.js';
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const EMOJIS = ['🦊', '🐻', '🐼', '🐸', '🦁', '🐯', '🐨', '🐵', '🦄', '🐙', '🦉', '🐧', '🐳', '🦖', '🐝', '🦀', '🐢', '🦩', '🐺', '🦦', '🐲', '🦔', '🐞', '🦜'];
@@ -38,6 +38,7 @@ const ui = {
   freeTool: 'timer',
   lastGeoRender: 0,
   liveOk: true,   // last contact with the live game server worked
+  update: { checkedAt: 0, latest: '' },
   joinCode: '',
 };
 
@@ -583,11 +584,16 @@ function viewSettings() {
     <h2>Install</h2>
     <p class="small">${isIOS ? 'In Safari: tap <b>Share</b> → <b>Add to Home Screen</b>. Then always open the deck from the home-screen icon. It keeps its own storage, separate from Safari tabs.' : 'Use your browser menu → <b>Install app</b> or <b>Add to Home screen</b>.'}</p>
   </section>
+  <section class="panel">
+    <h2>App version</h2>
+    <p>This phone runs <b>${VERSION}</b>${ui.update.latest && ui.update.latest !== VERSION ? `, and <b>${esc(ui.update.latest)}</b> is available` : ui.update.checkedAt ? ', the latest' : ''}.</p>
+    <button class="btn" data-act="check-update">🔄 Check for updates</button>
+    <p class="muted small">The app checks by itself every time it's opened, and updates straight away unless a game is running.</p>
+  </section>
   ${rulesBlock()}
   <section class="panel">
     <h2>Danger zone</h2>
     <button class="btn bad" data-act="reset-all">Delete all data on this phone</button>
-    <p class="muted small">Version ${VERSION}</p>
   </section>`;
 }
 
@@ -1234,6 +1240,8 @@ const actions = {
     render();
   },
   'live-info': () => { ui.sheet = { type: 'live' }; renderSheet(); },
+  'check-update': () => checkForUpdate({ manual: true }),
+  'apply-update': () => applyUpdate(),
   'go-live': async () => {
     const code = await goLive();
     ui.sheet = code ? { type: 'live' } : null;
@@ -1453,7 +1461,71 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
   autoSync();
   pollLive(); // catch up on a live game straight away after the phone was locked
+  checkForUpdate(); // iPhones resume home-screen apps without reloading them
 });
+
+// ── Updates ─────────────────────────────────────────────────────────────────
+// Ask the server which version is current (bypassing every cache). If it's newer than the
+// one running: update right away when nothing is going on, otherwise show a banner.
+async function checkForUpdate({ manual = false } = {}) {
+  if (!manual && Date.now() - ui.update.checkedAt < 60000) return;
+  ui.update.checkedAt = Date.now();
+  try {
+    const res = await fetch(`./js/version.js?check=${Date.now()}`, { cache: 'no-store' });
+    const latest = (await res.text()).match(/VERSION\s*=\s*'([^']+)'/)?.[1];
+    if (!latest) throw new Error('no version found');
+    ui.update.latest = latest;
+    if (latest === VERSION) {
+      if (manual) toast(`✓ You have the latest version (${VERSION})`);
+      showUpdateBanner(false);
+    } else if (manual || (!store.game && !ui.sheet && !justTriedUpdating(latest) && !document.activeElement?.matches('input,textarea,select'))) {
+      applyUpdate();
+      return;
+    } else {
+      showUpdateBanner(true);
+    }
+  } catch {
+    if (manual) toast('⚠️ Could not reach the server to check');
+  }
+  if (ui.tab === 'settings') renderView();
+}
+
+// Every file of the app (keep in step with SHELL in sw.js).
+const APP_FILES = ['./', './index.html', './manifest.webmanifest', './css/app.css', './js/app.js', './js/version.js',
+  './js/rules.js', './js/store.js', './js/tools.js', './js/live.js', './js/data/cards.js', './js/data/places.js', './js/data/lists.js'];
+
+/** Did we already try to update to this version a moment ago? Then don't reload again (no loops). */
+function justTriedUpdating(latest) {
+  try {
+    const t = JSON.parse(sessionStorage.getItem('cad.updateTry') || 'null');
+    return t && t.v === latest && Date.now() - t.at < 120000;
+  } catch { return false; }
+}
+
+async function applyUpdate() {
+  toast('✨ Updating…');
+  try { sessionStorage.setItem('cad.updateTry', JSON.stringify({ v: ui.update.latest, at: Date.now() })); } catch {}
+  try {
+    // 1. Drop the saved offline copy. 2. Fetch every file fresh, which also refreshes the
+    // browser's own cache. Games, players and settings live in localStorage and IndexedDB,
+    // which this doesn't touch.
+    for (const k of await caches.keys()) await caches.delete(k);
+    await Promise.all(APP_FILES.map((u) => fetch(u, { cache: 'reload' }).catch(() => null)));
+    const reg = await navigator.serviceWorker?.getRegistration();
+    await reg?.update();
+  } catch {}
+  location.reload();
+}
+
+function showUpdateBanner(show) {
+  let el = $('#update-banner');
+  if (!show) { el?.remove(); return; }
+  if (el) return;
+  el = document.createElement('div');
+  el.id = 'update-banner';
+  el.innerHTML = `✨ Version ${esc(ui.update.latest)} is ready <button class="btn small primary" data-act="apply-update">Update now</button>`;
+  document.body.prepend(el);
+}
 store.onChange(() => renderView());
 
 // ── Boot ────────────────────────────────────────────────────────────────────
@@ -1468,6 +1540,7 @@ if (me() && !ui.setup.playerIds.includes(store.settings.meId)) ui.setup.playerId
 render();
 autoSync();
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('./sw.js').catch(() => {});
+checkForUpdate();
 
 // For tests and debugging in the console.
 window.__deck = { store, ui, render };
