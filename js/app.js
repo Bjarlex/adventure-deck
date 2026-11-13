@@ -172,6 +172,8 @@ function viewSetup() {
     <p class="muted small">Someone started a game on their phone? Enter the 4-letter code shown at the top of their screen.</p>
   </section>` : ''}
 
+  ${store.crew().deleted ? `<div class="banner soft">🗑 The owner deleted "${esc(store.crew().name)}". You can still play here on this phone, but nothing syncs any more. <button class="btn small" data-act="goto-crews">Crews</button></div>` : ''}
+
   ${players.length && !me() ? `
   <section class="panel who-am-i">
     <h2>👋 Which one are you?</h2>
@@ -593,6 +595,7 @@ function viewSettings() {
 
 function crewStatus(c) {
   if (c.local) return '📱 Only on this phone';
+  if (c.deleted) return '🗑 Deleted by the owner. Its records only remain on this phone';
   if (!canSync(c)) return '⚠️ Not signed in. Join again with an invite';
   const role = c.token ? 'Member' : '👑 Owner';
   if (c.syncError) return `${role} · ⚠️ ${esc(c.syncError)}`;
@@ -609,8 +612,9 @@ function crewsPanel() {
         <div class="crew-name"><b>${c.local ? '📱' : '☁️'} ${esc(c.name)}</b><small>${crewStatus(c)}</small></div>
         <div class="row">
           ${c.id === active.id ? '<span class="badge ok">Playing</span>' : `<button class="btn small" data-act="switch-crew" data-id="${c.id}">Switch</button>`}
-          ${!c.local && (c.invite || (c.admin && isAdmin())) ? `<button class="btn small" data-act="invite-crew" data-id="${c.id}">✉️ Invite</button>` : ''}
-          ${!c.local && c.id !== active.id ? `<button class="btn small bad" data-act="leave-crew" data-id="${c.id}">Leave</button>` : ''}
+          ${!c.local && !c.deleted && (c.invite || (c.admin && isAdmin())) ? `<button class="btn small" data-act="invite-crew" data-id="${c.id}">✉️ Invite</button>` : ''}
+          ${!c.local && (c.id !== active.id || c.deleted) ? `<button class="btn small bad" data-act="leave-crew" data-id="${c.id}">Leave</button>` : ''}
+          ${c.admin && isAdmin() && c.id !== MAIN && !c.local && !c.deleted ? `<button class="btn small bad" data-act="delete-crew" data-id="${c.id}" data-name="${esc(c.name)}">🗑 Delete</button>` : ''}
         </div>
       </li>`).join('')}
     </ul>
@@ -667,7 +671,9 @@ function sheetServerCrews(list) {
   const here = new Set(store.crews().map((c) => c.id));
   return `<h2>👑 Crews on the server</h2>
     <ul class="crew-list">${list.map((c) => `<li><div class="crew-name"><b>☁️ ${esc(c.name)}</b><small>${c.members} member pass${c.members === 1 ? '' : 'es'}${c.id === MAIN ? ' · the original crew' : ''}</small></div>
-      <div class="row">${here.has(c.id) ? '<span class="badge">On this phone</span>' : `<button class="btn small" data-act="add-server-crew" data-id="${c.id}" data-name="${esc(c.name)}">Add to this phone</button>`}</div></li>`).join('')}</ul>
+      <div class="row">${here.has(c.id) ? '<span class="badge">On this phone</span>' : `<button class="btn small" data-act="add-server-crew" data-id="${c.id}" data-name="${esc(c.name)}">Add to this phone</button>`}
+        ${c.id !== MAIN ? `<button class="btn small bad" data-act="delete-crew" data-id="${c.id}" data-name="${esc(c.name)}">🗑 Delete</button>` : ''}</div></li>`).join('')}</ul>
+    <p class="muted small">The Main crew can't be deleted: it holds the original records.</p>
     <div class="col"><button class="btn" data-act="close-sheet">Close</button></div>`;
 }
 
@@ -1339,10 +1345,31 @@ const actions = {
       else { await navigator.clipboard.writeText(text); toast('📋 Invite message copied'); }
     } catch { /* share sheet closed */ }
   },
-  'leave-crew': ({ id }) => {
+  'leave-crew': async ({ id }) => {
     const c = store.crews().find((x) => x.id === id);
-    if (!c || !confirm(`Remove "${c.name}" from this phone?\n\nThe crew and its records stay on the server for everyone else. You can join again with an invite code.`)) return;
+    if (!c) return;
+    const msg = c.deleted
+      ? `Remove "${c.name}" from this phone?\n\nThe owner already deleted this crew, so its records only exist on this phone. They will be gone.`
+      : `Remove "${c.name}" from this phone?\n\nThe crew and its records stay on the server for everyone else. You can join again with an invite code.`;
+    if (!confirm(msg)) return;
+    if (store.crew().id === id) {
+      if (store.game) return toast('Finish or leave the running game first');
+      await switchCrew((store.crews().find((x) => x.id === MAIN && !x.deleted) || store.crews().find((x) => x.local)).id, { quiet: true });
+    }
     store.removeCrew(id); toast(`👋 Left ${c.name} on this phone`); renderView();
+  },
+  'delete-crew': async ({ id, name }) => {
+    if (store.game && store.crew().id === id) return toast('Finish the running game in this crew first');
+    const typed = prompt(`Delete the crew "${name}" for everyone?\n\nAll its players, records and live games are erased from the server, and its members can't sync any more. This can't be undone.\n\nType the crew name to confirm:`);
+    if (typed === null) return;
+    if (typed.trim().toLowerCase() !== name.trim().toLowerCase()) return toast('The name didn\'t match, so nothing was deleted');
+    try {
+      await crewsApi.remove(id);
+      toast(`🗑 ${name} deleted`);
+      if (ui.sheet?.type === 'server-crews') { ui.sheet.list = ui.sheet.list?.filter((c) => c.id !== id); }
+      Object.assign(ui.setup, { playerIds: me() ? [store.crew().meId] : [], guests: [] });
+      render();
+    } catch (e) { toast('⚠️ ' + e.message); }
   },
   'server-crews': async () => {
     ui.sheet = { type: 'server-crews', list: null }; renderSheet();

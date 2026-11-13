@@ -211,7 +211,7 @@ test('merging when both copies played the same game adds them up', () => {
 function mockKV() {
   const m = new Map(); let writes = 0;
   return { get: async (k, t) => (m.has(k) ? (t === 'json' ? JSON.parse(m.get(k)) : m.get(k)) : null), put: async (k, v) => { writes++; m.set(k, v); }, writes: () => writes,
-    list: async ({ prefix }) => ({ keys: [...m.keys()].filter((k) => k.startsWith(prefix)).map((name) => ({ name })) }), raw: m };
+    list: async ({ prefix }) => ({ keys: [...m.keys()].filter((k) => k.startsWith(prefix)).map((name) => ({ name })) }), delete: async (k) => { m.delete(k); }, raw: m };
 }
 const env = () => ({ DECK: mockKV(), CREW_KEY: 'secret-key', ALLOWED_ORIGIN: 'https://friend.github.io' });
 // Browsers forbid setting the Origin header on a real Request, so use a request-shaped object
@@ -262,6 +262,7 @@ function mockD1() {
         if (s.startsWith('DELETE FROM live_games WHERE updated_at')) { let n = 0; for (const [k, r] of rows) if (r.updated_at < args[0]) { rows.delete(k); n++; } return { meta: { changes: n } }; }
         if (s.startsWith('INSERT OR IGNORE')) { const [code, state, now, crew] = args; if (rows.has(code)) return { meta: { changes: 0 } }; rows.set(code, { version: 1, state, updated_at: now, crew }); return { meta: { changes: 1 } }; }
         if (s.startsWith('UPDATE live_games')) { const [state, now, code, base, crew] = args; const r = rows.get(code); if (!r || r.version !== base || r.crew !== crew) return { meta: { changes: 0 } }; Object.assign(r, { state, version: r.version + 1, updated_at: now }); return { meta: { changes: 1 } }; }
+        if (s.startsWith('DELETE FROM live_games WHERE crew')) { for (const [k, r] of rows) if (r.crew === args[0]) rows.delete(k); return { meta: { changes: 1 } }; }
         if (s.startsWith('DELETE FROM live_games WHERE code')) { const r = rows.get(args[0]); if (r && r.crew === args[1]) rows.delete(args[0]); return { meta: { changes: 1 } }; }
         throw new Error('unexpected SQL: ' + s);
       },
@@ -410,6 +411,39 @@ await atest('crews: live games are invisible to other crews', async () => {
   eq((await req(e, 'PUT', `/api/live/${code}`, { baseVersion: 1, state: { hijack: true } }, ADMIN)).status, 404, 'main crew cannot change it');
   const back = await (await req(e, 'GET', `/api/live/${code}`, null, memberOf(a.id, token))).json();
   eq(back.state, { x: 1 });
+});
+
+await atest('delete crew: owner only, and never the Main crew', async () => {
+  const e = liveEnv();
+  const c = await (await req(e, 'POST', '/api/crews', { name: 'Doomed' }, ADMIN)).json();
+  const { token } = await (await req(e, 'POST', '/api/join', { invite: c.invite })).json();
+  eq((await req(e, 'DELETE', `/api/crews/${c.id}`, null, memberOf(c.id, token))).status, 401, 'members cannot delete');
+  eq((await req(e, 'DELETE', `/api/crews/${c.id}`)).status, 401, 'no auth');
+  eq((await req(e, 'DELETE', '/api/crews/main', null, ADMIN)).status, 400, 'main is protected');
+  eq((await req(e, 'DELETE', '/api/crews/ZZZZZZZZ', null, ADMIN)).status, 404, 'unknown crew');
+});
+await atest('delete crew: records, live games and invites are gone; members are told', async () => {
+  const e = liveEnv();
+  const c = await (await req(e, 'POST', '/api/crews', { name: 'Doomed' }, ADMIN)).json();
+  const keep = await (await req(e, 'POST', '/api/crews', { name: 'Keeper' }, ADMIN)).json();
+  const { token } = await (await req(e, 'POST', '/api/join', { invite: c.invite })).json();
+  const k = await (await req(e, 'POST', '/api/join', { invite: keep.invite })).json();
+  await req(e, 'POST', '/api/sync', { players: [{ id: 'p_x', name: 'X', updatedAt: 1 }] }, memberOf(c.id, token));
+  const { code } = await (await req(e, 'POST', '/api/live', { state: { a: 1 } }, memberOf(c.id, token))).json();
+  const { code: keepCode } = await (await req(e, 'POST', '/api/live', { state: { b: 1 } }, memberOf(keep.id, k.token))).json();
+  const r = await req(e, 'DELETE', `/api/crews/${c.id}`, null, ADMIN);
+  eq(r.status, 200); eq((await r.json()).name, 'Doomed');
+  ok(!e.DECK.raw.has(`crew:doc:${c.id}`), 'records erased');
+  ok(![...e.GAMES.rows.values()].some((x) => x.crew === c.id), 'live games erased');
+  ok(e.GAMES.rows.has(keepCode), 'other crews keep their live games');
+  eq((await req(e, 'POST', '/api/sync', {}, memberOf(c.id, token))).status, 410, 'member told it was deleted');
+  eq((await req(e, 'GET', `/api/live/${code}`, null, memberOf(c.id, token))).status, 410);
+  eq((await req(e, 'POST', '/api/join', { invite: c.invite })).status, 410, 'invite dead');
+  eq((await req(e, 'POST', '/api/sync', {}, { ...ADMIN, 'x-crew-id': c.id })).status, 410, 'owner too');
+  eq((await req(e, 'DELETE', `/api/crews/${c.id}`, null, ADMIN)).status, 404, 'cannot delete twice');
+  eq((await req(e, 'POST', `/api/crews/${c.id}/invite`, {}, ADMIN)).status, 404, 'no new invites');
+  eq((await (await req(e, 'GET', '/api/crews', null, ADMIN)).json()).map((x) => x.name), ['Main crew', 'Keeper']);
+  eq((await req(e, 'POST', '/api/sync', {}, memberOf(keep.id, k.token))).status, 200, 'other crews unaffected');
 });
 
 // ── App: moving settings from earlier versions ──

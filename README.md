@@ -2,7 +2,7 @@
 
 A challenge card game for walking around Copenhagen with friends. Install it on your phone's home screen. It works offline, and it can share players, highscores and your own cards between your phones.
 
-Version 2.4. The original Koder version is in `v1-original/`.
+Version 2.5. The original Koder version is in `v1-original/`.
 
 ## What's in it
 
@@ -92,6 +92,7 @@ Each crew has its own players, crew cards, switched-off cards, records and live 
 - **Leaked code?** The owner taps ✉️ Invite → **Replace invite code**. The old code stops working, and everyone already in the crew stays in.
 - **The original crew** is called *Main crew*. Phones that used the crew key before 2.4 are moved into it automatically. The owner can make an invite for it like for any other crew.
 - **Leave** removes a crew and its copy from this phone; the crew and its records stay on the server.
+- **Delete** (owner only, ✉️ row or "All crews on the server"): type the crew name to confirm. Its records and live games are erased from the server; members see "Deleted by the owner" and can leave it. The Main crew can't be deleted.
 - Invite codes and member passes are stored on the server only as SHA-256 hashes.
 - Switching crews isn't possible while a game is running.
 

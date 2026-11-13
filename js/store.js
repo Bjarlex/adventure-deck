@@ -158,7 +158,7 @@ export function authHeaders(crew = store.crew()) {
   return { 'x-crew-id': crew.id, 'x-crew-key': store.settings.adminKey };
 }
 
-export const canSync = (crew = store.crew()) => !!(crew && !crew.local && apiUrl() && (crew.token || (crew.admin && store.settings.adminKey)));
+export const canSync = (crew = store.crew()) => !!(crew && !crew.local && !crew.deleted && apiUrl() && (crew.token || (crew.admin && store.settings.adminKey)));
 export const syncConfigured = () => canSync();
 export const isAdmin = () => !!store.settings.adminKey;
 
@@ -196,6 +196,18 @@ export const crewsApi = {
   },
   /** Owner only: every crew on the server. */
   list: () => api('GET', '/api/crews', null, adminHeaders()),
+  /** Owner only: erase a crew on the server (not Main), then drop it from this phone. */
+  async remove(id) {
+    const r = await api('DELETE', `/api/crews/${id}`, null, adminHeaders());
+    const c = store.settings.crews.find((x) => x.id === id);
+    if (c) {
+      if (store.settings.activeCrew === id) {
+        store.switchCrew((store.settings.crews.find((x) => x.id === MAIN && !x.deleted) || store.settings.crews.find((x) => x.local)).id);
+      }
+      store.removeCrew(id);
+    }
+    return r;
+  },
 };
 
 export function scheduleSync(delay = 2500) {
@@ -222,7 +234,9 @@ export async function sync() {
       return { ok: true, changed };
     } catch (e) {
       c.syncError = e.message;
+      if (e.status === 410) c.deleted = true; // the owner deleted this crew
       store.saveSettings();
+      if (e.status === 410) store.emit();
       throw e;
     } finally {
       syncing = null;

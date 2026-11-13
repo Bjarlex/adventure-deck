@@ -9,6 +9,7 @@
 // /api/crew          GET            → the caller's crew
 // /api/crews         GET / POST     → list / create crews     (admin key only)
 // /api/crews/:id/invite  POST       → a new invite code; the old one stops working (admin key only)
+// /api/crews/:id     DELETE         → erase a crew's records and live games (admin key only, not main)
 // /api/sync          Crew records (players, crew cards, card switches, finished games) as one JSON
 //                    document per crew in KV. Updates are merged: newest updatedAt wins per item.
 // /api/live[/CODE]   Games in progress in D1 (consistent: every phone sees each move at once).
@@ -57,12 +58,16 @@ export default {
 
       if (path === '/api/join') return json(await join(request, env), 200, cors);
 
-      const crewsRoute = path.match(/^\/api\/crews(?:\/([A-Za-z0-9]{4,8})\/invite)?$/);
+      const crewsRoute = path.match(/^\/api\/crews(?:\/([A-Za-z0-9]{4,8})(\/invite)?)?$/);
       if (crewsRoute) {
         await authenticate(request, env, { adminOnly: true });
-        if (crewsRoute[1]) {
+        if (crewsRoute[1] && crewsRoute[2]) {
           if (request.method !== 'POST') throw httpError(405, 'Method not allowed');
           return json(await newInvite(env, normaliseCrewId(crewsRoute[1]), await readJson(request)), 200, cors);
+        }
+        if (crewsRoute[1]) {
+          if (request.method !== 'DELETE') throw httpError(405, 'Method not allowed');
+          return json(await deleteCrew(env, normaliseCrewId(crewsRoute[1])), 200, cors);
         }
         if (request.method === 'GET') return json(await listCrews(env), 200, cors);
         if (request.method === 'POST') return json(await createCrew(env, await readJson(request)), 201, cors);
@@ -114,6 +119,8 @@ async function sha256(text) {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+const goneError = () => httpError(410, 'This crew was deleted by its owner');
+
 // Crew settings are read on every request (live polling!), so keep them in memory briefly.
 const metaCache = new Map();
 async function getMeta(env, crew) {
@@ -135,13 +142,17 @@ async function authenticate(request, env, { adminOnly = false } = {}) {
   if (!validCrewId(crew)) throw httpError(400, 'Bad crew id');
   if (key) {
     if (!safeEqual(key, env.CREW_KEY)) throw httpError(401, 'Wrong crew key');
-    if (crew !== MAIN && !(await getMeta(env, crew))) throw httpError(404, 'Unknown crew');
+    if (adminOnly) return { crew, admin: true }; // crew management routes name their crew in the path
+    const meta = crew === MAIN ? null : await getMeta(env, crew);
+    if (crew !== MAIN && !meta) throw httpError(404, 'Unknown crew');
+    if (meta?.deleted) throw goneError();
     return { crew, admin: true };
   }
   if (adminOnly) throw httpError(401, 'Only the crew owner (admin key) can do this');
   const token = request.headers.get('x-member-token') || '';
   if (!token || !request.headers.get('x-crew-id')) throw httpError(401, 'Not signed in to a crew');
   const meta = await getMeta(env, crew);
+  if (meta?.deleted) throw goneError();
   const hash = await sha256(`${token}:${crew}`);
   if (!meta || !(meta.members || []).some((m) => safeEqual(m.hash, hash))) {
     throw httpError(401, 'This phone is not a member of that crew (any more). Ask the owner for a new invite');
@@ -158,8 +169,7 @@ async function readJson(request) {
 const cleanName = (s, fallback) => String(s || '').trim().replace(/\s+/g, ' ').slice(0, 40) || fallback;
 
 async function createCrew(env, body) {
-  const existing = await env.DECK.list({ prefix: 'crew:meta:' });
-  if (existing.keys.length >= MAX_CREWS) throw httpError(400, `Maximum ${MAX_CREWS} crews`);
+  if ((await listCrews(env)).length > MAX_CREWS) throw httpError(400, `Maximum ${MAX_CREWS} crews`);
   let id;
   for (let i = 0; i < 5; i++) { id = randomString(8); if (!(await env.DECK.get(metaKey(id)))) break; }
   const secret = randomString(20);
@@ -173,7 +183,7 @@ async function listCrews(env) {
   const { keys } = await env.DECK.list({ prefix: 'crew:meta:' });
   for (const k of keys) {
     const m = await env.DECK.get(k.name, 'json');
-    if (!m) continue;
+    if (!m || m.deleted) continue;
     if (m.id === MAIN) Object.assign(out[0], { name: m.name, members: m.members?.length || 0 });
     else out.push({ id: m.id, name: m.name, members: m.members?.length || 0, createdAt: m.createdAt });
   }
@@ -183,7 +193,7 @@ async function listCrews(env) {
 async function newInvite(env, id, body) {
   if (!validCrewId(id)) throw httpError(400, 'Bad crew id');
   let meta = await env.DECK.get(metaKey(id), 'json');
-  if (!meta && id !== MAIN) throw httpError(404, 'Unknown crew');
+  if ((!meta && id !== MAIN) || meta?.deleted) throw httpError(404, 'Unknown crew');
   meta ??= { id: MAIN, name: cleanName(body?.name, 'Main crew'), members: [], createdAt: Date.now() };
   const secret = randomString(20);
   meta.inviteHash = await sha256(`${secret}:${id}`);
@@ -198,6 +208,7 @@ async function join(request, env) {
   if (!m) throw httpError(400, 'That doesn\'t look like an invite code');
   const id = normaliseCrewId(m[1]), secret = m[2].toUpperCase();
   const meta = validCrewId(id) ? await env.DECK.get(metaKey(id), 'json') : null;
+  if (meta?.deleted) throw goneError();
   if (!meta?.inviteHash || !safeEqual(meta.inviteHash, await sha256(`${secret}:${id}`))) {
     throw httpError(401, 'This invite code is wrong or has been replaced. Ask the crew owner for a new one');
   }
@@ -205,6 +216,25 @@ async function join(request, env) {
   meta.members = [...(meta.members || []), { hash: await sha256(`${token}:${id}`), at: Date.now() }].slice(-MAX_MEMBERS);
   await putMeta(env, meta);
   return { crew: { id, name: meta.name }, token };
+}
+
+/**
+ * Owner only: erase a crew's records and live games. A small marker stays behind so member
+ * phones get "deleted by its owner" (410) instead of a confusing sign-in error.
+ * The Main crew can't be deleted: it holds the original records.
+ */
+async function deleteCrew(env, id) {
+  if (id === MAIN) throw httpError(400, 'The Main crew can\'t be deleted');
+  if (!validCrewId(id)) throw httpError(400, 'Bad crew id');
+  const meta = await env.DECK.get(metaKey(id), 'json');
+  if (!meta || meta.deleted) throw httpError(404, 'Unknown crew');
+  await env.DECK.delete(docKey(id));
+  if (env.GAMES) {
+    await ensureSchema(env.GAMES);
+    await env.GAMES.prepare('DELETE FROM live_games WHERE crew = ?').bind(id).run();
+  }
+  await putMeta(env, { id, name: meta.name, deleted: true, deletedAt: Date.now() });
+  return { ok: true, id, name: meta.name };
 }
 
 // ── Live games (D1) ─────────────────────────────────────────────────────────
