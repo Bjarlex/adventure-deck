@@ -67,6 +67,44 @@ test('your areas now have location cards nearby', () => {
   }
 });
 
+// ── Confirming results in live games ──
+const claimGame = (n, confirm, votes = {}, extra = {}) => ({
+  live: { code: 'ABCD', version: 1 }, rules: { confirm }, turn: 0,
+  players: [P('turn'), ...Array.from({ length: n }, (_, i) => P('v' + i)), { id: 'guest_1', name: 'G', guest: true }],
+  current: { cardId: 'g001', claim: { type: 'done', by: null, at: 0, votes } }, ...extra,
+});
+test('voters are everyone except the player on turn and guests', () => {
+  eq(R.claimVoters(claimGame(2, 'majority')), ['v0', 'v1']);
+});
+test('confirmation only applies to live games with other players', () => {
+  ok(R.needsConfirmation(claimGame(1, 'majority')));
+  ok(!R.needsConfirmation(claimGame(1, 'off')), 'off');
+  ok(!R.needsConfirmation({ ...claimGame(1, 'majority'), live: null }), 'local game');
+  ok(!R.needsConfirmation(claimGame(0, 'majority')), 'only guests besides you');
+  ok(!R.needsConfirmation({ ...claimGame(1, undefined) }), 'older games without the setting');
+});
+test('majority of the others decides', () => {
+  const o = (n, votes) => R.claimOutcome(claimGame(n, 'majority', votes));
+  eq([o(1, { v0: 'yes' }), o(1, { v0: 'no' }), o(1, {})], ['accepted', 'disputed', 'pending']);
+  eq([o(2, { v0: 'yes' }), o(2, { v0: 'yes', v1: 'yes' }), o(2, { v0: 'no' })], ['pending', 'accepted', 'disputed']);
+  eq([o(3, { v0: 'yes', v1: 'yes' }), o(3, { v0: 'yes', v1: 'no' }), o(3, { v0: 'no', v1: 'no' })], ['accepted', 'pending', 'disputed']);
+  eq([o(4, { v0: 'yes', v1: 'yes' }), o(4, { v0: 'yes', v1: 'yes', v2: 'yes' }), o(4, { v0: 'no', v1: 'no' })], ['pending', 'accepted', 'disputed']);
+});
+test('"everyone else" needs every vote, one no sends it back', () => {
+  const o = (votes) => R.claimOutcome(claimGame(3, 'all', votes));
+  eq([o({ v0: 'yes', v1: 'yes' }), o({ v0: 'yes', v1: 'yes', v2: 'yes' }), o({ v0: 'yes', v1: 'yes', v2: 'no' })], ['pending', 'accepted', 'disputed']);
+});
+test('the player on turn and guests cannot vote themselves through', () => {
+  eq(R.claimOutcome(claimGame(1, 'majority', { turn: 'yes', guest_1: 'yes' })), 'pending');
+});
+test('a stuck claim can be accepted after 2 minutes, only with yes votes', () => {
+  const g = (votes) => claimGame(3, 'all', votes);
+  ok(!R.claimCanBeForced(g({ v0: 'yes' }), R.CLAIM_TIMEOUT - 1), 'too early');
+  ok(R.claimCanBeForced(g({ v0: 'yes' }), R.CLAIM_TIMEOUT + 1));
+  ok(!R.claimCanBeForced(g({}), R.CLAIM_TIMEOUT + 1), 'no votes at all');
+  ok(!R.claimCanBeForced(g({ v0: 'yes', v1: 'no' }), R.CLAIM_TIMEOUT + 1), 'someone said no');
+});
+
 // ── Season, light and weather ──
 const cphDate = (iso) => new Date(iso);
 test('sunrise and sunset for Copenhagen are right within ~10 minutes', () => {

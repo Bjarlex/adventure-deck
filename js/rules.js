@@ -332,6 +332,52 @@ export function completionPoints(card, rules, { bonus = false, checkin = false }
   return base + (bonus ? Math.round(base * STYLE_BONUS) : 0) + (checkin ? CHECKIN_BONUS : 0);
 }
 
+// ── Confirming results (live games) ─────────────────────────────────────────
+// In a live game, "Done" or "Failed" is a claim the other players confirm on their phones.
+// Rejecting (a veto) never needs confirmation.
+export const CONFIRM = {
+  majority: { label: 'Majority of the others', hint: 'More than half of the other players must confirm. Someone wandering off can\'t block the game.' },
+  all:      { label: 'Everyone else',          hint: 'All other players must confirm. One "no" sends it back.' },
+  off:      { label: 'Off',                    hint: 'Whoever taps Done or Failed decides, as in a local game.' },
+};
+export const CLAIM_TIMEOUT = 120000; // after 2 min, a claim with ≥1 yes and no "no" can be accepted as is
+
+/** Who votes on a claim: every player except the one on turn, and except guests (no phone). */
+export function claimVoters(game) {
+  const onTurn = game.players[game.turn]?.id;
+  return game.players.filter((p) => p.id !== onTurn && !isGuest(p)).map((p) => p.id);
+}
+
+export function needsConfirmation(game) {
+  return !!game.live && !!game.rules.confirm && game.rules.confirm !== 'off' && claimVoters(game).length > 0;
+}
+
+/** 'accepted' | 'disputed' | 'pending' for the claim on the current card (null without a claim). */
+export function claimOutcome(game, now = Date.now()) {
+  const claim = game.current?.claim;
+  if (!claim) return null;
+  const voters = claimVoters(game);
+  const n = voters.length;
+  if (!n) return 'accepted';
+  const yes = voters.filter((id) => claim.votes?.[id] === 'yes').length;
+  const no = voters.filter((id) => claim.votes?.[id] === 'no').length;
+  if (game.rules.confirm === 'all') {
+    if (no > 0) return 'disputed';
+    return yes === n ? 'accepted' : 'pending';
+  }
+  if (yes >= Math.floor(n / 2) + 1) return 'accepted';
+  if (no >= Math.ceil(n / 2)) return 'disputed';
+  return 'pending';
+}
+
+/** Can the waiting claim be accepted as it stands (timeout with only "yes" votes so far)? */
+export function claimCanBeForced(game, now = Date.now()) {
+  const claim = game.current?.claim;
+  if (!claim || now - claim.at < CLAIM_TIMEOUT) return false;
+  const votes = Object.values(claim.votes || {});
+  return votes.includes('yes') && !votes.includes('no');
+}
+
 export function currentRound(game) {
   return Math.floor(game.log.length / Math.max(1, game.players.length)) + 1;
 }

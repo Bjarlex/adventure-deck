@@ -304,3 +304,13 @@ body.busy [data-act] { opacity: .7; }
   opacity: 0; transition: .25s; z-index: 30; pointer-events: none; max-width: calc(100% - 32px); text-align: center;
 }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* ── Claims (live games: the others confirm Done/Failed) ── */
+.claim { border: 2px solid var(--ochre); }
+.claim-what { font-size: 1.05rem; margin: 0 0 8px; }
+.votes { list-style: none; padding: 0; margin: 6px 0; }
+.votes li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.votes li:first-child { border-top: 0; }
+.votes .row { margin-top: 0; }
+.vote.yes { color: var(--green); }
+.vote.no { color: var(--red); }

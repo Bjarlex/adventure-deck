@@ -9,6 +9,7 @@ import {
   playerStats, rejectCost, costAfterPenance, completionPoints, currentRound, isOver, winnersOf, awardsFor,
   leaderboard, topScores, distanceM, bearingDeg, compassLabel, fmtDistance,
   nameKey, isGuest, similarNames, duplicateGroups, mergePlayerInGame,
+  CONFIRM, claimVoters, needsConfirmation, claimOutcome, claimCanBeForced,
 } from './rules.js';
 import { store, uid, sync, syncConfigured, scheduleSync, photos, compressImage, canSync, isAdmin, crewsApi, MAIN } from './store.js';
 import { DEFAULT_SERVER } from './config.js';
@@ -27,7 +28,7 @@ const LENGTHS = [['open', 'Open'], ['r3', '3 rounds'], ['r5', '5 rounds'], ['r6'
 const ui = {
   tab: 'play',
   setup: {
-    playerIds: [], guests: [], modeId: 'classic', length: 'open', useLocation: true, live: true,
+    playerIds: [], guests: [], modeId: 'classic', length: 'open', useLocation: true, live: true, confirm: 'majority',
     custom: { tags: {}, maxMins: 0, minDiff: 1, maxDiff: 4, freeVetoes: 1, penanceChance: 0.4, mult: 1, placeBias: 0 },
   },
   sheet: null,
@@ -162,6 +163,7 @@ function setupGameDraft() {
     rules = { freeVetoes: c.freeVetoes, penanceChance: c.penanceChance, mult: c.mult, placeBias: c.placeBias, pickNearby: c.placeBias > 0 };
   }
   const len = s.length;
+  rules.confirm = s.live && syncConfigured() ? s.confirm : 'off';
   if (len.startsWith('r')) rules.rounds = Number(len.slice(1)); else delete rules.rounds;
   if (len.startsWith('t')) rules.minutes = Number(len.slice(1)); else delete rules.minutes;
   const players = [
@@ -282,7 +284,10 @@ function viewSetup() {
   <section class="panel">
     <h2>📡 Live on every phone</h2>
     ${syncConfigured()
-      ? `<label class="switch-row"><input type="checkbox" data-act-change="setup-live" ${s.live ? 'checked' : ''}> <span>Share this game live. Friends join with a code, and anyone can draw and score.</span></label>`
+      ? `<label class="switch-row"><input type="checkbox" data-act-change="setup-live" ${s.live ? 'checked' : ''}> <span>Share this game live. Friends join with a code, and anyone can draw and score.</span></label>
+        ${s.live ? `<h3>🗳 Who confirms Done / Failed?</h3>
+        <div class="chips">${Object.entries(CONFIRM).map(([k, c]) => chip(c.label, s.confirm === k, 'setup-confirm', { v: k })).join('')}</div>
+        <p class="muted small">${esc(CONFIRM[s.confirm].hint)} Vetoes never need confirming.</p>` : ''}`
       : '<p class="muted small">Set up crew sync in Settings to play one game across several phones.</p>'}
   </section>
 
@@ -396,15 +401,54 @@ function viewCurrentCard(g, card, stats, turnP) {
   ${card.tool ? renderTool(card.tool, toolState('game', card.tool), { scope: 'game', card, players: g.players }) : ''}
   <button class="btn ghost small" data-act="open-tools">🧰 Other tools</button>
 
+  ${cur.claim ? viewClaim(g, card, pts, rc) : `
   <section class="panel resolve">
     ${pickers}
     <label class="switch-row"><input type="checkbox" data-act-change="bonus" ${cur.bonus ? 'checked' : ''}> <span>🔥 Legendary (+25%)</span></label>
     <div class="resolve-btns">
       <button class="btn ok big ${needsPick ? 'waiting' : ''}" data-act="resolve-done">✅ Done <small>${needsPick ? (card.who === 'duo' ? 'pick a partner first' : 'pick the winner first') : `+${pts}`}</small></button>
       <button class="btn" data-act="resolve-fail">😅 Failed <small>0</small></button>
-      <button class="btn bad" data-act="open-reject">🙅 Reject <small>${rc.free ? 'free veto' : `−${rc.cost}`}</small></button>
+      ${canVeto(g) ? `<button class="btn bad" data-act="open-reject">🙅 Reject <small>${rc.free ? 'free veto' : `−${rc.cost}`}</small></button>` : `<button class="btn bad" disabled>🙅 Only ${esc(turnP.name)} can veto</button>`}
+    </div>
+    ${needsConfirmation(g) ? `<p class="muted small center">🗳 Done and Failed need confirming by the others (${esc(CONFIRM[g.rules.confirm].label.toLowerCase())}). A veto is instant.</p>` : ''}
+  </section>`}`;
+}
+
+/** The voting panel while a Done/Failed claim waits for the others. */
+function viewClaim(g, card, pts, rc) {
+  const claim = g.current.claim;
+  const byName = (id) => g.players.find((p) => p.id === id);
+  const claimer = claim.by ? byName(claim.by) : null;
+  const voters = claimVoters(g).map(byName);
+  const yes = voters.filter((p) => claim.votes[p.id] === 'yes').length;
+  const needed = g.rules.confirm === 'all' ? voters.length : Math.floor(voters.length / 2) + 1;
+  const what = claim.type === 'done'
+    ? `✅ <b>Done</b>: ${winnersText(g, card)} would get <b>+${pts}</b>`
+    : '😅 <b>Failed</b>: no points, no penalty';
+  const mine = myPlayerIn(g);
+  const canWithdraw = !mine || !claim.by || claim.by === mine || g.players[g.turn].id === mine;
+  return `<section class="panel resolve claim">
+    <p class="pick-label">🗳 ${claimer ? pname(claimer) : 'Someone'} says:</p>
+    <p class="claim-what">${what}</p>
+    <ul class="votes">${voters.map((p) => {
+      const v = claim.votes[p.id];
+      return `<li><span>${pname(p)}</span>${v ? `<b class="vote ${v}">${v === 'yes' ? '✅ Confirmed' : '❌ No'}</b>`
+        : canVoteAs(g, p.id) ? `<span class="row"><button class="btn small ok" data-act="vote" data-id="${p.id}" data-v="yes">✅ Confirm</button><button class="btn small bad" data-act="vote" data-id="${p.id}" data-v="no">❌ No</button></span>`
+        : '<span class="muted">⏳ waiting</span>'}</li>`;
+    }).join('')}</ul>
+    <p class="muted small">Confirmed ${yes} of ${needed} needed (${esc(CONFIRM[g.rules.confirm].label.toLowerCase())}).${mine && !claimVoters(g).includes(mine) ? ' It\'s your card, so the others decide.' : ''}</p>
+    <div class="row">
+      ${canWithdraw ? '<button class="btn small" data-act="withdraw-claim">↩️ Withdraw</button>' : ''}
+      ${claimCanBeForced(g) ? '<button class="btn small" data-act="force-claim">⏱ Accept as it stands</button>' : ''}
+      ${canVeto(g) ? `<button class="btn small bad" data-act="open-reject">🙅 Veto instead <small>${rc.free ? 'free' : `−${rc.cost}`}</small></button>` : ''}
     </div>
   </section>`;
+}
+
+function winnersText(g, card) {
+  const cur = g.current, p = g.players[g.turn];
+  const ids = card.who === 'solo' ? [p.id] : card.who === 'duo' ? [p.id, ...cur.partners] : card.who === 'group' ? g.players.map((x) => x.id) : cur.winners;
+  return ids.map((id) => esc(g.players.find((x) => x.id === id)?.name)).join(' & ') || 'nobody';
 }
 
 function viewSummary(game) {
@@ -775,7 +819,7 @@ function sheetMenu() {
       <button class="btn bad" data-act="abandon-game">🗑 Abandon without saving${g.live ? ' (for everyone)' : ''}</button>
       <button class="btn" data-act="close-sheet">Close</button>
     </div>
-    <p class="muted small">Penance chance: ${Math.round((g.rules.penanceChance || 0) * 100)}% · Free vetoes: ${g.rules.freeVetoes || 0} each · Points ×${g.rules.mult || 1}</p>`;
+    <p class="muted small">Penance chance: ${Math.round((g.rules.penanceChance || 0) * 100)}% · Free vetoes: ${g.rules.freeVetoes || 0} each · Points ×${g.rules.mult || 1}${g.live ? ` · Confirming: ${esc(CONFIRM[g.rules.confirm || 'off'].label)}` : ''}</p>`;
 }
 
 function sheetLive() {
@@ -990,6 +1034,7 @@ async function goLive() {
   try {
     const r = await live.create(g);
     g.live = { code: r.code, version: r.version };
+    g.rules.confirm ??= 'majority'; // results are confirmed by the others from now on
     saveGame();
     setLiveOk(true);
     return r.code;
@@ -1034,6 +1079,17 @@ function applyRemote({ version, state }, { quiet = false } = {}) {
   if (state.abandoned) { dropGame('The game was abandoned on another phone'); return; }
   const g = { ...state, live: { code: prev.live.code, version } };
   if (!quiet && g.log.length > prev.log.length) toast(describeEntry(g.log[g.log.length - 1], g));
+  // Someone claimed Done/Failed: ask this phone to confirm if it has a vote.
+  const claim = g.current?.claim;
+  if (!quiet && claim && !prev.current?.claim) {
+    const mine = myPlayerIn(g);
+    const hasVote = mine ? claimVoters(g).includes(mine) && claim.by !== mine : claimVoters(g).length > 0;
+    if (hasVote) {
+      const who = g.players.find((p) => p.id === claim.by)?.name || 'Someone';
+      toast(`🗳 ${who} says ${claim.type === 'done' ? 'Done' : 'Failed'}. Confirm?`);
+      try { navigator.vibrate?.([80, 40, 80]); } catch {}
+    }
+  }
   const myTurnNow = isMe(g.players[g.turn]?.id) && !isMe(prev.players[prev.turn]?.id);
   if (myTurnNow) {
     setTimeout(() => toast('🎯 Your turn!'), quiet ? 0 : 1800);
@@ -1082,40 +1138,101 @@ function setLiveOk(ok) {
   document.querySelector('.live-pill')?.classList.toggle('bad', !ok);
 }
 
+/** Score the current card in game `g` and pass the turn. Returns a message, or false if it can't be scored. */
+function applyResolution(g, type, how) {
+  const cur = g.current;
+  if (!cur) return false;
+  const card = cardById(cur.cardId);
+  const p = g.players[g.turn];
+  const entry = { ts: Date.now(), cardId: card.id, title: card.title, pid: p.id, type, awards: {}, place: !!card.place, offered: cur.penance || null, photo: cur.tools.photo?.key || null };
+  let msg;
+  if (type === 'done') {
+    const ids = card.who === 'solo' ? [p.id] : card.who === 'duo' ? [p.id, ...cur.partners] : card.who === 'group' ? g.players.map((x) => x.id) : cur.winners;
+    if (!ids.length || (card.who === 'duo' && ids.length < 2)) return false; // nobody picked: nothing to score
+    const pts = completionPoints(card, g.rules, { bonus: cur.bonus, checkin: cur.checkin });
+    for (const id of ids) entry.awards[id] = pts;
+    Object.assign(entry, { bonus: cur.bonus, checkin: cur.checkin });
+    msg = `✅ +${pts} for ${ids.map((id) => g.players.find((x) => x.id === id)?.name).join(' & ')}`;
+  } else if (type === 'reject') {
+    const rc = rejectCost(card, g.rules, playerStats(g)[p.id]);
+    let cost = rc.cost;
+    if (how === 'penance' && cur.penance && !rc.free) { cost = costAfterPenance(cost, cur.penance.level); entry.penance = cur.penance; }
+    Object.assign(entry, { free: rc.free, cost });
+    if (cost) entry.awards[p.id] = -cost;
+    msg = rc.free ? '🙅 Free veto used' : `🙅 −${cost} for ${p.name}`;
+  } else {
+    msg = '😅 Good try. No points, no penalty';
+  }
+  if (cur.claim) entry.confirmedBy = Object.keys(cur.claim.votes || {}).filter((id) => cur.claim.votes[id] === 'yes');
+  g.log.push(entry);
+  g.current = null;
+  g.turn = (g.turn + 1) % g.players.length;
+  return msg;
+}
+
 async function resolve(type, how) {
   const cardId = store.game?.current?.cardId;
   if (!cardId) return;
+  // Live games: Done/Failed is a claim the others confirm. A veto is always instant.
+  if (type !== 'reject' && needsConfirmation(store.game)) { await makeClaim(type); return; }
   let msg = '';
   const ok = await mutate((g) => {
-    const cur = g.current;
-    if (!cur || cur.cardId !== cardId) return false; // already resolved on another phone
-    const card = cardById(cur.cardId);
-    const p = g.players[g.turn];
-    const entry = { ts: Date.now(), cardId: card.id, title: card.title, pid: p.id, type, awards: {}, place: !!card.place, offered: cur.penance || null, photo: cur.tools.photo?.key || null };
-    if (type === 'done') {
-      const ids = card.who === 'solo' ? [p.id] : card.who === 'duo' ? [p.id, ...cur.partners] : card.who === 'group' ? g.players.map((x) => x.id) : cur.winners;
-      if (!ids.length || (card.who === 'duo' && ids.length < 2)) return false; // nobody picked: nothing to score
-      const pts = completionPoints(card, g.rules, { bonus: cur.bonus, checkin: cur.checkin });
-      for (const id of ids) entry.awards[id] = pts;
-      Object.assign(entry, { bonus: cur.bonus, checkin: cur.checkin });
-      msg = `✅ +${pts} for ${ids.map((id) => g.players.find((x) => x.id === id)?.name).join(' & ')}`;
-    } else if (type === 'reject') {
-      const rc = rejectCost(card, g.rules, playerStats(g)[p.id]);
-      let cost = rc.cost;
-      if (how === 'penance' && cur.penance && !rc.free) { cost = costAfterPenance(cost, cur.penance.level); entry.penance = cur.penance; }
-      Object.assign(entry, { free: rc.free, cost });
-      if (cost) entry.awards[p.id] = -cost;
-      msg = rc.free ? '🙅 Free veto used' : `🙅 −${cost} for ${p.name}`;
-    } else {
-      msg = '😅 Good try. No points, no penalty';
-    }
-    g.log.push(entry);
-    g.current = null;
-    g.turn = (g.turn + 1) % g.players.length;
+    if (g.current?.cardId !== cardId) return false; // already resolved on another phone
+    msg = applyResolution(g, type, how);
+    return msg ? undefined : false;
   });
   if (ok) { toast(msg); ui.sheet = null; }
   render();
   if (ok) window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// ── Claims: the others confirm Done/Failed (live games) ────────────────────
+/** The player this phone votes as in this game: "This is me", if they're playing. */
+const myPlayerIn = (g) => (me() && g.players.some((p) => p.id === store.crew().meId) ? store.crew().meId : null);
+/** Can this phone vote for player `pid`? Your own vote only, or anyone on a shared phone without "This is me". */
+const canVoteAs = (g, pid) => claimVoters(g).includes(pid) && (!myPlayerIn(g) || myPlayerIn(g) === pid);
+/** A veto is the player's own call: in a live game only their phone (or a shared phone) offers it. */
+const canVeto = (g) => !g.live || !myPlayerIn(g) || myPlayerIn(g) === g.players[g.turn].id;
+
+async function makeClaim(type) {
+  const cardId = store.game.current.cardId;
+  let msg = '';
+  const ok = await mutate((g) => {
+    const cur = g.current;
+    if (!cur || cur.cardId !== cardId || cur.claim) return false;
+    const by = myPlayerIn(g);
+    cur.claim = { type, by, at: Date.now(), votes: {} };
+    if (by && claimVoters(g).includes(by)) cur.claim.votes[by] = 'yes'; // a teammate claiming counts as their yes
+    if (claimOutcome(g) === 'accepted') {
+      msg = applyResolution(g, type);
+      if (!msg) return false;
+    }
+  });
+  if (ok) toast(msg || '🗳 Sent. Waiting for the others to confirm');
+  render();
+}
+
+async function vote(pid, value) {
+  const cardId = store.game?.current?.cardId;
+  let msg = '';
+  const ok = await mutate((g) => {
+    const cur = g.current;
+    if (!cur?.claim || cur.cardId !== cardId || !claimVoters(g).includes(pid)) return false;
+    cur.claim.votes[pid] = value;
+    const outcome = claimOutcome(g);
+    if (outcome === 'accepted') {
+      const r = applyResolution(g, cur.claim.type);
+      if (!r) return false;
+      msg = `✔️ Confirmed. ${r}`;
+    } else if (outcome === 'disputed') {
+      delete cur.claim;
+      msg = '❌ Not confirmed. Sort it out, then claim again or veto';
+    } else {
+      msg = value === 'yes' ? '✅ Vote counted' : '❌ Vote counted';
+    }
+  });
+  if (ok) toast(msg);
+  render();
 }
 
 async function undo() {
@@ -1233,6 +1350,7 @@ const actions = {
     renderView();
   },
   'setup-length': ({ v }) => { ui.setup.length = v; renderView(); },
+  'setup-confirm': ({ v }) => { ui.setup.confirm = v; renderView(); },
   'cm-tag': ({ tag }) => {
     const t = ui.setup.custom.tags;
     t[tag] = !t[tag] ? 'any' : t[tag] === 'any' ? 'no' : undefined;
@@ -1275,11 +1393,11 @@ const actions = {
   },
   'skip-turn': async () => { await mutate((g) => { if (g.current) return false; g.turn = (g.turn + 1) % g.players.length; }); renderView(); },
   'pick-partner': async ({ id }) => {
-    await mutate((g) => { const c = g.current; if (!c) return false; c.partners = c.partners.includes(id) ? c.partners.filter((x) => x !== id) : [...c.partners, id]; });
+    await mutate((g) => { const c = g.current; if (!c || c.claim) return false; c.partners = c.partners.includes(id) ? c.partners.filter((x) => x !== id) : [...c.partners, id]; });
     renderView();
   },
   'pick-winner': async ({ id }) => {
-    await mutate((g) => { const c = g.current; if (!c) return false; c.winners = c.winners.includes(id) ? c.winners.filter((x) => x !== id) : [...c.winners, id]; });
+    await mutate((g) => { const c = g.current; if (!c || c.claim) return false; c.winners = c.winners.includes(id) ? c.winners.filter((x) => x !== id) : [...c.winners, id]; });
     renderView();
   },
   'checkin': async () => {
@@ -1307,6 +1425,22 @@ const actions = {
     resolve('done');
   },
   'resolve-fail': () => resolve('fail'),
+  'vote': ({ id, v }) => vote(id, v),
+  'withdraw-claim': async () => {
+    const ok = await mutate((g) => { if (!g.current?.claim) return false; delete g.current.claim; });
+    if (ok) toast('↩️ Claim withdrawn');
+    render();
+  },
+  'force-claim': async () => {
+    let msg = '';
+    const ok = await mutate((g) => {
+      if (!claimCanBeForced(g)) return false;
+      msg = applyResolution(g, g.current.claim.type);
+      return msg ? undefined : false;
+    });
+    if (ok) toast(`⏱ Accepted. ${msg}`);
+    render();
+  },
   'open-reject': () => { ui.sheet = { type: 'reject' }; renderSheet(); },
   'reject': ({ how }) => resolve('reject', how),
   'game-menu': () => { ui.sheet = { type: 'menu' }; renderSheet(); },
@@ -1530,7 +1664,7 @@ const changeActions = {
   },
   'bonus': async (el) => {
     const checked = el.checked;
-    await mutate((g) => { if (!g.current) return false; g.current.bonus = checked; });
+    await mutate((g) => { if (!g.current || g.current.claim) return false; g.current.bonus = checked; });
     renderView();
   },
   'photo': async (el) => {
@@ -1682,6 +1816,9 @@ setInterval(() => {
     if (tickClock(el, toolState(scope, tool))) { finished = true; if (scope === 'game') saveGame(); }
   });
   if (finished) toast('⏰ Time!');
+  // Show "Accept as it stands" once a waiting claim is old enough.
+  const cl = store.game?.current?.claim;
+  if (cl && ui.tab === 'play' && !ui.sheet && ui.forcedShownFor !== cl.at && claimCanBeForced(store.game)) { ui.forcedShownFor = cl.at; renderView(); }
   const gt = $('[data-gametime]');
   if (gt && store.game?.rules.minutes) gt.textContent = fmtClock(Math.max(0, store.game.startedAt + store.game.rules.minutes * 60000 - Date.now()));
 }, 250);

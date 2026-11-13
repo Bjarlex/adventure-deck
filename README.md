@@ -2,7 +2,7 @@
 
 A challenge card game for walking around Copenhagen with friends. Install it on your phone's home screen. It works offline, and it can share players, highscores and your own cards between your phones.
 
-Version 2.6. The original Koder version is in `v1-original/`.
+Version 2.7. The original Koder version is in `v1-original/`.
 
 ## What's in it
 
@@ -118,6 +118,7 @@ Games in progress are stored in a small D1 database (Cloudflare's SQLite). Unlik
 
 To play: when starting a game, keep **📡 Share this game live** on. The code appears at the top of the screen (tap it to show it big). Others go to **Play → Join a live game** and enter it. You can also put an ongoing game live from the **⋯** menu.
 
+- **The others confirm results.** In a live game, ✅ Done and 😅 Failed are a claim: the other players (not the one on turn, not guests) confirm on their phones. You choose when starting: **majority of the others** (default), **everyone else**, or **off**. A ❌ No from enough of them sends it back, and the claimer can withdraw. After 2 minutes, a claim with only ✅ votes can be accepted as it stands, so nobody can block the game. A phone with ⭐ This is me votes only as you; a shared phone without it can vote for anyone. **A veto is always instant**, and only the player on turn (or a shared phone) can veto.
 - Every move is sent to the server first. If the connection drops, the move fails with a message and nothing is lost: tap again when you have signal. The 📡 pill turns red while a phone has no connection.
 - Photos stay on the phone that took them. GPS check-in uses the location of whoever presses it.
 - **⋯ → Stop following on this phone** leaves the game; it carries on for the others. **Abandon** ends it for everyone.
