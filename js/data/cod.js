@@ -36,7 +36,8 @@ export const HOUSE_RULES = [
 // ── Games ───────────────────────────────────────────────────────────────────
 // Researched 2026-11-13 from the Call of Duty Wiki (callofduty.fandom.com: each game's page,
 // map and game-type templates, "Split Screen"), cross-checked with Activision support FAQs
-// (Black Ops III, Infinite Warfare) and Co-Optimus.
+// (Black Ops III, Infinite Warfare) and Co-Optimus. On Xbox Series X, the 360 discs of MW2, Black Ops,
+// MW3, Black Ops II, Ghosts and Advanced Warfare run via backward compatibility (Microsoft's list).
 // maxSplit: local splitscreen players in offline multiplayer. Maps: base game only (no DLC,
 // no pre-order bonus maps). Party modes are only listed where they are confirmed to work offline.
 // modes[].kinds: which round formats a mode suits; min: fewest players it is fun with.
@@ -84,16 +85,16 @@ export const COD_GAMES = [
     modes: [TDM, FFA, DOM, SND, HP, KC, CTF, t('Uplink'), t('Search and Rescue'), t('Momentum')],
     coop: { name: 'Exo Survival', maxSplit: 2, maps: ['Bio Lab', 'Retreat', 'Detroit', 'Ascend', 'Horizon', 'Comeback', 'Terrace', 'Instinct', 'Greenband', 'Solar', 'Recovery', 'Defender'],
       goal: 'Survive to round {target} together.', targets: [10, 15, 20, 25] } },
-  { id: 'bo3', short: 'Black Ops III', name: 'Black Ops III', maxSplit: 4, note: '4-player splitscreen on PS4 and Xbox One only',
+  { id: 'bo3', short: 'Black Ops III', name: 'Black Ops III', maxSplit: 4, note: 'needs the Xbox One disc (4 players, runs on Series X); the 360 version has no splitscreen and is not backward compatible',
     maps: ['Aquarium', 'Breach', 'Combine', 'Evac', 'Exodus', 'Fringe', 'Havoc', 'Hunted', 'Infection', 'Metro', 'Redwood', 'Stronghold'],
     modes: [TDM, FFA, DOM, SND, DEM, HP, KC, CTF, t('Safeguard'), t('Uplink')],
     coop: { name: 'Zombies', maxSplit: 2, maps: ['Shadows of Evil'], goal: 'Survive to round {target} together.', targets: ROUNDS } },
-  { id: 'iw', short: 'Inf. Warfare', name: 'Infinite Warfare', maxSplit: 2,
+  { id: 'iw', short: 'Inf. Warfare', name: 'Infinite Warfare', maxSplit: 2, note: 'Xbox One disc only (no 360 version)',
     maps: ['Breakout', 'Crusher', 'Frontier', 'Frost', 'Genesis', 'Grounded', 'Mayday', 'Precinct', 'Retaliation', 'Scorch', 'Skydock', 'Throwback'],
     modes: [TDM, FFA, DOM, SND, HP, KC, t('Frontline'), t('Defender'), CTF, t('Uplink'), t('Search and Rescue'), DEM, t('Reinforce'), t('Grind'), t('Drop Zone'),
       party('Gun Game'), party('Cranked'), party('All or Nothing'), party('Infected', 3)],
     coop: { name: 'Zombies', maxSplit: 2, maps: ['Zombies in Spaceland'], goal: 'Survive to round {target} together.', targets: ROUNDS } },
-  { id: 'wwii', short: 'WWII', name: 'WWII', maxSplit: 2,
+  { id: 'wwii', short: 'WWII', name: 'WWII', maxSplit: 2, note: 'Xbox One disc only (no 360 version)',
     maps: ['Aachen', 'Ardennes Forest', 'Flak Tower', 'Gibraltar', 'Gustav Cannon', 'London Docks', 'Pointe du Hoc', 'Sainte Marie du Mont', 'USS Texas'],
     modes: [TDM, FFA, DOM, SND, HP, CTF, KC, t('Gridiron')],
     coop: { name: 'Nazi Zombies', maxSplit: 2, maps: ['The Final Reich'], goal: 'Survive to round {target} together.', targets: ROUNDS } },
