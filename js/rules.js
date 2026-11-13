@@ -296,12 +296,79 @@ export function awardsFor(rows) {
   return out;
 }
 
-/** All-time leaderboard from finished games. */
+// ── Players: names, guests, merging ─────────────────────────────────────────
+export const nameKey = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+/** Guests play in one game only: never in the crew list or the all-time records. */
+export const isGuest = (p) => !!p?.guest || String(p?.id || '').startsWith('guest_');
+
+function editDistance(a, b) {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...new Array(b.length).fill(0)]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      // Two swapped letters ("Bjarek") count as one typo.
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+    }
+  }
+  return d[a.length][b.length];
+}
+
+/** "Raf" vs "Rafael", "Matt" vs "Mat", "Bjarke" vs "Bjarek": probably the same person. */
+export function similarNames(a, b) {
+  a = nameKey(a); b = nameKey(b);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (Math.min(a.length, b.length) >= 3 && (a.startsWith(b) || b.startsWith(a))) return true;
+  if (Math.min(a.length, b.length) < 3) return false;
+  return editDistance(a, b) <= (Math.max(a.length, b.length) >= 7 ? 2 : 1);
+}
+
+/** Groups of crew players sharing the same name (case and spacing ignored). */
+export function duplicateGroups(players) {
+  const by = {};
+  for (const p of players) (by[nameKey(p.name)] ??= []).push(p);
+  return Object.values(by).filter((g) => g.length > 1);
+}
+
+const STAT_KEYS = ['score', 'done', 'failed', 'rejected', 'freeUsed', 'paidRejects', 'penances', 'places', 'bonuses', 'turns'];
+
+/**
+ * Rewrite a finished game so player `fromId` becomes `to` ({id, name, emoji}).
+ * Returns the new game, or null if `fromId` didn't play in it.
+ */
+export function mergePlayerInGame(game, fromId, to) {
+  if (!game.players.some((p) => p.id === fromId)) return null;
+  const g = structuredClone(game);
+  const from = g.players.find((p) => p.id === fromId);
+  const existing = g.players.find((p) => p.id === to.id);
+  if (existing) {
+    // Both copies played in the same game: add the numbers together.
+    for (const k of STAT_KEYS) existing[k] = (existing[k] || 0) + (from[k] || 0);
+    g.players = g.players.filter((p) => p.id !== fromId);
+    g.winnerIds = winnersOf(g.players);
+  } else {
+    Object.assign(from, { id: to.id, name: to.name, emoji: to.emoji });
+    g.winnerIds = [...new Set((g.winnerIds || []).map((id) => (id === fromId ? to.id : id)))];
+  }
+  for (const e of g.log || []) {
+    if (e.pid === fromId) e.pid = to.id;
+    if (e.awards && fromId in e.awards) {
+      e.awards[to.id] = (e.awards[to.id] || 0) + e.awards[fromId];
+      delete e.awards[fromId];
+    }
+  }
+  return g;
+}
+
+/** All-time leaderboard from finished games (guests left out). */
 export function leaderboard(games, players) {
   const rows = {};
   const ensure = (p) => (rows[p.id] ??= { id: p.id, name: p.name, emoji: p.emoji, games: 0, wins: 0, points: 0, best: null, done: 0, rejected: 0, penances: 0, places: 0 });
   for (const g of games) {
     for (const p of g.players) {
+      if (isGuest(p)) continue;
       const r = ensure(p);
       r.games++;
       r.points += p.score;
@@ -320,7 +387,7 @@ export function leaderboard(games, players) {
 
 export function topScores(games, n = 10) {
   return games
-    .flatMap((g) => g.players.map((p) => ({ ...p, gameId: g.id, modeName: g.modeName, endedAt: g.endedAt, nPlayers: g.players.length })))
+    .flatMap((g) => g.players.filter((p) => !isGuest(p)).map((p) => ({ ...p, gameId: g.id, modeName: g.modeName, endedAt: g.endedAt, nPlayers: g.players.length })))
     .sort((a, b) => b.score - a.score || a.endedAt - b.endedAt)
     .slice(0, n);
 }

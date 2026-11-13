@@ -84,6 +84,14 @@ a { color: var(--teal); }
 .page-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .banner { background: var(--ochre); color: #1d2733; padding: 12px 14px; border-radius: var(--radius); margin: 10px 0; font-weight: 700; display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
 .banner.win { background: var(--green); color: #fff; justify-content: center; }
+.banner.soft { background: color-mix(in srgb, var(--ochre) 18%, var(--surface)); color: var(--ink); font-weight: 600; border: 1px solid var(--ochre); }
+.who-am-i { border: 2px solid var(--ochre); }
+.chip.guest { background: var(--surface-2); color: var(--ink); border-style: dashed; border-color: var(--teal); }
+.turn-label.mine { color: var(--ochre); font-size: 1.3rem; }
+.score.me .nm { font-weight: 800; }
+.board li.me, .players li.me { border: 2px solid var(--ochre); }
+.you { background: var(--ochre); color: #1d2733; border-radius: 999px; padding: 1px 7px; font-size: .7rem; font-weight: 800; vertical-align: middle; }
+.inline-add select { flex: 1; font: inherit; font-size: 16px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); min-width: 0; }
 
 /* ── Setup ──────────────────────────────────────── */
 .inline-add { display: flex; gap: 8px; margin-top: 8px; }

@@ -2,7 +2,7 @@
 
 A challenge card game for walking around Copenhagen with friends. Install it on your phone's home screen. It works offline, and it can share players, highscores and your own cards between your phones.
 
-Version 2.1. The original Koder version is in `v1-original/`.
+Version 2.2. The original Koder version is in `v1-original/`.
 
 ## What's in it
 
@@ -81,7 +81,14 @@ This lets every friend's phone share players, crew cards, switched-off cards and
 
 Sync happens automatically when the app opens, after a game ends and when cards or players change, and you can also press ⟳ Sync in Records.
 
-**How records sync:** when a game ends it's saved and synced, and everyone's phone shows the same records. Create players on one phone and sync before the others add them, otherwise you get two "Rafael"s.
+**How records sync:** when a game ends it's saved and synced, and everyone's phone shows the same records.
+
+**Players:**
+- **Crew** players are one shared list that every phone can add to. Records are tied to the player, so renaming someone keeps their history.
+- **⭐ This is me:** each phone picks its own player once (on the Play screen, or in Settings). It's then picked automatically, says "Your turn!" in live games, offers "Join as …" when you open a game you're not in, and is highlighted in the records. Only this phone knows; it isn't synced.
+- **No duplicates:** before adding a crew player, the app pulls the latest list from the server. Exactly the same name reuses the existing player, and a similar one ("Raf" vs "Rafael", "Bjarek" vs "Bjarke") asks "Did you mean…?".
+- **Guests** are for one game only: they play and score and appear in that game's history, but they never join the crew list, the leaderboard or the highscores.
+- **Merge:** if a duplicate slips through anyway, Records → Players warns about it. Open the extra one → **Merge into…**. Their games, points and wins move over on every phone. Deleting a player who has games suggests merging instead.
 
 Free-plan limits: KV allows 1,000 writes a day. The Worker only writes when something actually changed, so a crew uses a handful a day.
 

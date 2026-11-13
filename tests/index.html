@@ -159,6 +159,47 @@ test('leaderboard and top scores', () => {
   eq(R.topScores(games, 2).map((r) => r.score), [70, 50]);
 });
 
+// ── Players ──
+test('names match regardless of case and spacing', () => {
+  eq(R.nameKey('  Rafael  Bo '), 'rafael bo');
+  ok(R.similarNames('rafael', 'Rafael'));
+});
+test('similar names: nicknames and typos, but not different people', () => {
+  ok(R.similarNames('Raf', 'Rafael'), 'prefix');
+  ok(R.similarNames('Matt', 'Mat'), 'prefix 3');
+  ok(R.similarNames('Bjarke', 'Bjarek'), 'swap');
+  ok(R.similarNames('Christoffer', 'Kristoffer'), 'one letter in a long name');
+  ok(!R.similarNames('Matt', 'Mads'), 'Matt ≠ Mads');
+  ok(!R.similarNames('Bo', 'Bob'), 'too short to guess');
+  ok(!R.similarNames('Anna', 'Emma'));
+});
+test('duplicate groups', () => {
+  const g = R.duplicateGroups([{ id: 1, name: 'Rafael' }, { id: 2, name: 'rafael ' }, { id: 3, name: 'Matt' }]);
+  eq(g.map((x) => x.map((p) => p.id)), [[1, 2]]);
+});
+test('guests are recognised and left out of records', () => {
+  ok(R.isGuest({ id: 'guest_x' })); ok(R.isGuest({ id: 'p1', guest: true })); ok(!R.isGuest({ id: 'p_1' }));
+  const games = [{ id: 'g', endedAt: 1, winnerIds: ['guest_1'], players: [{ id: 'guest_1', name: 'Tourist', score: 99, guest: true }, { id: 'p_a', name: 'A', score: 10 }] }];
+  eq(R.leaderboard(games, []).map((r) => r.id), ['p_a']);
+  eq(R.topScores(games).map((r) => r.id), ['p_a']);
+});
+test('merging a duplicate rewrites players, winners, log and awards', () => {
+  const game = { id: 'g1', winnerIds: ['p_dup'], players: [{ id: 'p_dup', name: 'Raf', emoji: '🐸', score: 30, done: 2 }, { id: 'p_b', name: 'Bo', emoji: '🐼', score: 10, done: 1 }],
+    log: [{ pid: 'p_dup', type: 'done', awards: { p_dup: 20 } }, { pid: 'p_b', type: 'done', awards: { p_b: 10, p_dup: 10 } }] };
+  const m = R.mergePlayerInGame(game, 'p_dup', { id: 'p_raf', name: 'Rafael', emoji: '🐻' });
+  eq(m.players.map((p) => [p.id, p.name, p.score]), [['p_raf', 'Rafael', 30], ['p_b', 'Bo', 10]]);
+  eq(m.winnerIds, ['p_raf']);
+  eq(m.log.map((e) => [e.pid, e.awards]), [['p_raf', { p_raf: 20 }], ['p_b', { p_b: 10, p_raf: 10 }]]);
+  eq(game.players[0].id, 'p_dup', 'original must be untouched');
+  eq(R.mergePlayerInGame(game, 'p_nobody', { id: 'x' }), null);
+});
+test('merging when both copies played the same game adds them up', () => {
+  const game = { id: 'g2', winnerIds: ['p_b'], players: [{ id: 'p_dup', name: 'Raf', score: 15, done: 1 }, { id: 'p_raf', name: 'Rafael', score: 15, done: 1 }, { id: 'p_b', name: 'Bo', score: 20, done: 2 }], log: [] };
+  const m = R.mergePlayerInGame(game, 'p_dup', { id: 'p_raf', name: 'Rafael', emoji: '🐻' });
+  eq(m.players.map((p) => [p.id, p.score, p.done]), [['p_raf', 30, 2], ['p_b', 20, 2]]);
+  eq(m.winnerIds, ['p_raf'], 'combined score overtakes Bo');
+});
+
 // ── Worker ──
 function mockKV() {
   const m = new Map(); let writes = 0;

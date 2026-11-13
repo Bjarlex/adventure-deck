@@ -8,12 +8,13 @@ import {
   activeCards, normalizeCard, resolvePlace, cardPoints, eligibleCards, nearbyCards, drawCard, rollPenance,
   playerStats, rejectCost, costAfterPenance, completionPoints, currentRound, isOver, winnersOf, awardsFor,
   leaderboard, topScores, distanceM, bearingDeg, compassLabel, fmtDistance,
+  nameKey, isGuest, similarNames, duplicateGroups, mergePlayerInGame,
 } from './rules.js';
 import { store, uid, sync, syncConfigured, scheduleSync, photos, compressImage } from './store.js';
 import { renderTool, toolOp, tickClock, fmtClock } from './tools.js';
 import { live, normaliseCode } from './live.js';
 
-const VERSION = '2.1.1';
+const VERSION = '2.2.0';
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const EMOJIS = ['🦊', '🐻', '🐼', '🐸', '🦁', '🐯', '🐨', '🐵', '🦄', '🐙', '🦉', '🐧', '🐳', '🦖', '🐝', '🦀', '🐢', '🦩', '🐺', '🦦', '🐲', '🦔', '🐞', '🦜'];
@@ -24,7 +25,7 @@ const LENGTHS = [['open', 'Open'], ['r3', '3 rounds'], ['r5', '5 rounds'], ['r6'
 const ui = {
   tab: 'play',
   setup: {
-    playerIds: [], modeId: 'classic', length: 'open', useLocation: true, live: true,
+    playerIds: [], guests: [], modeId: 'classic', length: 'open', useLocation: true, live: true,
     custom: { tags: {}, maxMins: 0, minDiff: 1, maxDiff: 4, freeVetoes: 1, penanceChance: 0.4, mult: 1, placeBias: 0 },
   },
   sheet: null,
@@ -130,13 +131,21 @@ function setupGameDraft() {
   const len = s.length;
   if (len.startsWith('r')) rules.rounds = Number(len.slice(1)); else delete rules.rounds;
   if (len.startsWith('t')) rules.minutes = Number(len.slice(1)); else delete rules.minutes;
-  const players = s.playerIds.map((id) => store.get('players', id)).filter(Boolean).map(({ id, name, emoji }) => ({ id, name, emoji }));
+  const players = [
+    ...s.playerIds.map((id) => store.get('players', id)).filter(Boolean).map(({ id, name, emoji }) => ({ id, name, emoji })),
+    ...s.guests,
+  ];
   return { filter, rules, players, range: store.settings.range, useLocation: s.useLocation, log: [], used: [] };
 }
 
+/** The crew player this phone belongs to (set in Settings or on the Play screen). */
+const me = () => store.get('players', store.settings.meId);
+const isMe = (id) => !!id && id === store.settings.meId;
+const sortCrew = (list) => list.sort((a, b) => (isMe(b.id) - isMe(a.id)) || a.name.localeCompare(b.name));
+
 function viewSetup() {
   const s = ui.setup;
-  const players = store.list('players').sort((a, b) => a.name.localeCompare(b.name));
+  const players = sortCrew(store.list('players'));
   s.playerIds = s.playerIds.filter((id) => store.get('players', id));
   const mode = modeById[s.modeId];
   const draft = setupGameDraft();
@@ -160,13 +169,23 @@ function viewSetup() {
     <p class="muted small">Someone started a game on their phone? Enter the 4-letter code shown at the top of their screen.</p>
   </section>` : ''}
 
+  ${players.length && !me() ? `
+  <section class="panel who-am-i">
+    <h2>👋 Which one are you?</h2>
+    <p class="muted small">Tell this phone who you are. It's then picked automatically, and you get "Your turn!" in live games. You can change it in Settings.</p>
+    <div class="chips">${players.map((p) => chip(pname(p), false, 'set-me', { id: p.id })).join('')}</div>
+  </section>` : ''}
+
   <section class="panel">
     <h2>Who's playing?</h2>
-    <div class="chips">${players.map((p) => chip(pname(p), s.playerIds.includes(p.id), 'setup-player', { id: p.id })).join('')}</div>
+    <div class="chips">${players.map((p) => chip(pname(p) + (isMe(p.id) ? ' <small>(you)</small>' : ''), s.playerIds.includes(p.id), 'setup-player', { id: p.id })).join('')}
+      ${s.guests.map((p) => `<button class="chip on guest" data-act="remove-guest" data-id="${p.id}">${pname(p)} <small>guest ✕</small></button>`).join('')}</div>
     <form class="inline-add" data-form="add-player">
-      <input name="name" placeholder="Add a player" maxlength="24" autocomplete="off">
-      <button class="btn">Add</button>
+      <input name="name" placeholder="Name" maxlength="24" autocomplete="off">
+      <button class="btn" name="as" value="crew">＋ Crew</button>
+      <button class="btn" name="as" value="guest">＋ Guest</button>
     </form>
+    <p class="muted small"><b>Crew</b> players are saved and synced, and appear on the leaderboard. <b>Guests</b> play this game only.</p>
   </section>
 
   <section class="panel">
@@ -268,8 +287,9 @@ function viewGame() {
     <span>${g.live ? `<button class="live-pill ${ui.liveOk ? '' : 'bad'}" data-act="live-info">📡 ${esc(g.live.code)}</button>` : ''}${g.useLocation ? `<button class="gps-pill ${ui.geo}" data-act="geo-start">📍</button>` : ''}<button class="icon-btn" data-act="game-menu" aria-label="Game menu">⋯</button></span>
   </div>
   <div class="scores">${g.players.map((p, i) => `
-    <div class="score ${i === g.turn ? 'turn' : ''}"><span class="em">${esc(p.emoji)}</span><span class="nm">${esc(p.name)}</span><b>${stats[p.id].score}</b></div>`).join('')}
+    <div class="score ${i === g.turn ? 'turn' : ''} ${isMe(p.id) ? 'me' : ''}"><span class="em">${esc(p.emoji)}</span><span class="nm">${esc(p.name)}${isGuest(p) ? ' <small>guest</small>' : ''}</span><b>${stats[p.id].score}</b></div>`).join('')}
   </div>
+  ${me() && !g.players.some((p) => isMe(p.id)) ? `<div class="banner soft">You're not in this game. <button class="btn small" data-act="join-as-me">＋ Join as ${pname(me())}</button></div>` : ''}
   ${over ? `<div class="banner">${over === 'time' ? "⏰ Time's up!" : '🏁 Last round played!'} <button class="btn primary" data-act="end-game">See the podium</button></div>` : ''}
   ${card ? viewCurrentCard(g, card, stats, turnP) : viewDrawArea(g, turnP)}`;
 }
@@ -279,7 +299,7 @@ function viewDrawArea(g, turnP) {
   const near = g.useLocation ? nearbyCards(allCards(), g, here) : [];
   return `
   <div class="draw-area">
-    <p class="turn-label">${pname(turnP)}'s turn</p>
+    <p class="turn-label ${isMe(turnP.id) ? 'mine' : ''}">${isMe(turnP.id) ? `🎯 Your turn, ${esc(turnP.name)}!` : `${pname(turnP)}'s turn`}</p>
     <button class="deck-btn" data-act="draw"><span>🃏</span>Draw a card</button>
     <button class="btn ghost" data-act="skip-turn">Skip to next player</button>
   </div>
@@ -310,7 +330,7 @@ function viewCurrentCard(g, card, stats, turnP) {
   if (card.who === 'group') pickers = '<p class="pick-label">🙌 Everyone scores</p>';
 
   return `
-  <p class="turn-label">${pname(turnP)}'s card</p>
+  <p class="turn-label ${isMe(turnP.id) ? 'mine' : ''}">${isMe(turnP.id) ? '🎯 Your card!' : `${pname(turnP)}'s card`}</p>
   <article class="card d${card.diff}">
     <div class="card-band"><span>${DIFF[card.diff].label}</span><span>+${cardPoints(card, g.rules)}</span></div>
     <h2>${esc(card.title)}</h2>
@@ -462,11 +482,11 @@ function viewRecords() {
     const sort = SORTS[ui.records.sort];
     const rows = leaderboard(games, store.list('players')).sort((a, b) => sort.val(b) - sort.val(a));
     body = `<div class="chips scroll">${Object.entries(SORTS).map(([k, s]) => chip(s.label, ui.records.sort === k, 'rec-sort', { v: k })).join('')}</div>
-      ${rows.length ? `<ol class="board">${rows.map((r) => `<li><span class="em">${esc(r.emoji)}</span><div><b>${esc(r.name)}</b><small>${r.games} game${r.games === 1 ? '' : 's'} · ${r.wins} win${r.wins === 1 ? '' : 's'} · best ${r.best ?? 0}</small></div><span class="val">${sort.val(r)}</span></li>`).join('')}</ol>`
+      ${rows.length ? `<ol class="board">${rows.map((r) => `<li class="${isMe(r.id) ? 'me' : ''}"><span class="em">${esc(r.emoji)}</span><div><b>${esc(r.name)}${isMe(r.id) ? ' <small class="you">you</small>' : ''}</b><small>${r.games} game${r.games === 1 ? '' : 's'} · ${r.wins} win${r.wins === 1 ? '' : 's'} · best ${r.best ?? 0}</small></div><span class="val">${sort.val(r)}</span></li>`).join('')}</ol>`
         : '<p class="muted center">No finished games yet. Go play!</p>'}`;
   } else if (v === 'high') {
     const top = topScores(games, 15);
-    body = top.length ? `<ol class="board">${top.map((r) => `<li><span class="em">${esc(r.emoji)}</span><div><b>${esc(r.name)}</b><small>${esc(r.modeName)} · ${r.nPlayers} players · ${fmtDate(r.endedAt)}</small></div><span class="val">${r.score}</span></li>`).join('')}</ol>`
+    body = top.length ? `<ol class="board">${top.map((r) => `<li class="${isMe(r.id) ? 'me' : ''}"><span class="em">${esc(r.emoji)}</span><div><b>${esc(r.name)}</b><small>${esc(r.modeName)} · ${r.nPlayers} players · ${fmtDate(r.endedAt)}</small></div><span class="val">${r.score}</span></li>`).join('')}</ol>`
       : '<p class="muted center">No scores yet.</p>';
   } else if (v === 'history') {
     body = games.length ? `<ul class="history">${games.map((g) => {
@@ -474,9 +494,13 @@ function viewRecords() {
       return `<li><button data-act="open-game" data-id="${g.id}"><div><b>${g.modeIcon || ''} ${esc(g.modeName)}</b><small>${fmtDate(g.endedAt)} · ${g.players.length} players · ${g.log.length} cards</small></div><span>🏆 ${g.winnerIds.map((id) => esc(byId[id]?.emoji)).join('')}</span></button></li>`;
     }).join('')}</ul>` : '<p class="muted center">No games yet.</p>';
   } else {
-    const ps = store.list('players').sort((a, b) => a.name.localeCompare(b.name));
-    body = `<ul class="players">${ps.map((p) => `<li><span class="em">${esc(p.emoji)}</span><b>${esc(p.name)}</b><button class="btn small" data-act="edit-player" data-id="${p.id}">Edit</button></li>`).join('')}</ul>
-      <form class="inline-add" data-form="add-player"><input name="name" placeholder="New player name" maxlength="24" autocomplete="off"><button class="btn">Add</button></form>`;
+    const ps = sortCrew(store.list('players'));
+    const counts = gamesPerPlayer();
+    const dups = duplicateGroups(ps);
+    body = `${dups.map((grp) => `<div class="banner soft">⚠️ ${grp.length} players called "${esc(grp[0].name)}". Open the one you don't want and use <b>Merge into…</b></div>`).join('')}
+      <ul class="players">${ps.map((p) => `<li class="${isMe(p.id) ? 'me' : ''}"><span class="em">${esc(p.emoji)}</span><b>${esc(p.name)}${isMe(p.id) ? ' <small class="you">you</small>' : ''}<small class="muted"> ${counts[p.id] || 0} game${counts[p.id] === 1 ? '' : 's'}</small></b><button class="btn small" data-act="edit-player" data-id="${p.id}">Edit</button></li>`).join('')}</ul>
+      <form class="inline-add" data-form="add-player"><input name="name" placeholder="New crew player" maxlength="24" autocomplete="off"><button class="btn" name="as" value="crew">＋ Crew</button></form>
+      <p class="muted small">Guests (added on the Play screen) aren't listed here and don't count on the leaderboard.</p>`;
   }
   return `<header class="page-head"><h1>Records</h1>${syncConfigured() ? '<button class="btn small" data-act="sync-now">⟳ Sync</button>' : ''}</header>
     <div class="seg-tabs">${tabs.map(([k, l]) => `<button class="${v === k ? 'on' : ''}" data-act="rec-view" data-v="${k}">${l}</button>`).join('')}</div>
@@ -489,7 +513,7 @@ function gameDetail(game) {
   const icon = { done: '✅', fail: '😅', reject: '🙅' };
   return `<h2>${game.modeIcon || ''} ${esc(game.modeName)}</h2>
     <p class="muted small">${new Date(game.startedAt).toLocaleString()} · ${Math.round((game.endedAt - game.startedAt) / 60000)} min</p>
-    <table class="tbl">${rows.map((p) => `<tr><td>${game.winnerIds.includes(p.id) ? '🏆 ' : ''}${pname(p)}</td><td><b>${p.score}</b></td></tr>`).join('')}</table>
+    <table class="tbl">${rows.map((p) => `<tr><td>${game.winnerIds.includes(p.id) ? '🏆 ' : ''}${pname(p)}${isGuest(p) ? ' <small class="muted">guest</small>' : ''}</td><td><b>${p.score}</b></td></tr>`).join('')}</table>
     <h3>Cards</h3>
     <ol class="log">${game.log.map((e) => `<li>
       <div>${icon[e.type]} <b>${esc(e.title)}</b> <small>${esc(byId[e.pid]?.name || '')}</small></div>
@@ -510,7 +534,17 @@ function viewTools() {
 // ── SETTINGS ────────────────────────────────────────────────────────────────
 function viewSettings() {
   const s = store.settings;
+  const crew = sortCrew(store.list('players'));
   return `<header class="page-head"><h1>Settings</h1></header>
+  <section class="panel">
+    <h2>⭐ You on this phone</h2>
+    ${crew.length ? `<select class="search" data-act-change="set-me-select">
+      <option value="">Not set</option>
+      ${crew.map((p) => `<option value="${p.id}" ${isMe(p.id) ? 'selected' : ''}>${esc(p.emoji)} ${esc(p.name)}</option>`).join('')}
+    </select>
+    <p class="muted small">Picked automatically for new games. You also get "Your turn!" in live games and are highlighted in the records. Only this phone knows, and it isn't synced.</p>`
+    : '<p class="muted small">Add yourself as a crew player on the Play screen first.</p>'}
+  </section>
   <section class="panel">
     <h2>Crew sync</h2>
     <p class="muted small">Share players, crew cards, switched-off cards and finished games between your phones, through your own Cloudflare Worker (see the README). Without it, everything stays on this phone.</p>
@@ -593,7 +627,7 @@ function sheetMenu() {
     <div class="col">
       <button class="btn" data-act="undo" ${g.log.length || g.current ? '' : 'disabled'}>↩️ Undo last action</button>
       <button class="btn primary" data-act="end-game">🏁 End game & save</button>
-      <button class="btn" data-act="add-to-game">＋ Add a player to this game</button>
+      <div class="row"><button class="btn" data-act="add-to-game" data-as="crew">＋ Crew player</button><button class="btn" data-act="add-to-game" data-as="guest">＋ Guest</button></div>
       ${g.live ? '<button class="btn" data-act="live-info">📡 Show join code</button><button class="btn" data-act="leave-live">🚪 Stop following on this phone</button>'
         : syncConfigured() ? '<button class="btn" data-act="go-live">📡 Share this game live</button>' : ''}
       <button class="btn bad" data-act="abandon-game">🗑 Abandon without saving${g.live ? ' (for everyone)' : ''}</button>
@@ -612,16 +646,37 @@ function sheetLive() {
     <div class="col"><button class="btn" data-act="close-sheet">Close</button></div>`;
 }
 
+function gamesPerPlayer() {
+  const n = {};
+  for (const g of store.list('games')) for (const p of g.players) n[p.id] = (n[p.id] || 0) + 1;
+  return n;
+}
+
 function sheetPlayer(p) {
   if (!p) return '<p>Player not found.</p>';
-  return `<h2>Edit player</h2>
-    <form data-form="player" class="editor">
+  const others = sortCrew(store.list('players').filter((x) => x.id !== p.id));
+  const nGames = gamesPerPlayer()[p.id] || 0;
+  // Suggest the most likely duplicate first.
+  others.sort((a, b) => similarNames(b.name, p.name) - similarNames(a.name, p.name));
+  return `<h2>${esc(p.emoji)} ${esc(p.name)}</h2>
+    <p class="muted small">${nGames} game${nGames === 1 ? '' : 's'} in the records</p>
+    ${isMe(p.id) ? '<p class="badge ok">⭐ This is you on this phone</p>' : `<button class="btn" data-act="set-me" data-id="${p.id}">⭐ This is me (on this phone)</button>`}
+    <form data-form="player" class="editor" style="margin-top:12px">
       <input type="hidden" name="id" value="${p.id}">
       <label>Name<input name="name" maxlength="24" required value="${esc(p.name)}"></label>
       <fieldset><legend>Emoji</legend><div class="seg wrap emoji-pick">${EMOJIS.map((e) => `<label><input type="radio" name="emoji" value="${e}" ${p.emoji === e ? 'checked' : ''}><span>${e}</span></label>`).join('')}</div></fieldset>
-      <div class="row"><button class="btn primary">Save</button><button class="btn" type="button" data-act="close-sheet">Cancel</button><button class="btn bad small" type="button" data-act="delete-player" data-id="${p.id}">Delete</button></div>
-      <p class="muted small">Deleting a player keeps their past games in the records.</p>
-    </form>`;
+      <div class="row"><button class="btn primary">Save</button><button class="btn" type="button" data-act="close-sheet">Cancel</button></div>
+    </form>
+    ${others.length ? `
+    <h3>Merge into another player</h3>
+    <p class="muted small">Same person twice? Move all of ${esc(p.name)}'s games and points to the other player, then remove ${esc(p.name)}. Applies on every phone.</p>
+    <div class="inline-add">
+      <select id="merge-target">${others.map((o) => `<option value="${o.id}">${esc(o.emoji)} ${esc(o.name)}${similarNames(o.name, p.name) ? ' (same name?)' : ''}</option>`).join('')}</select>
+      <button class="btn" data-act="merge-player" data-id="${p.id}">Merge</button>
+    </div>` : ''}
+    <h3>Delete</h3>
+    <div class="row"><button class="btn bad small" data-act="delete-player" data-id="${p.id}">Delete ${esc(p.name)}</button></div>
+    <p class="muted small">${nGames ? 'Their past games stay in the records under the old name. To combine them with someone else, use Merge instead.' : 'They have no games yet, so nothing else changes.'}</p>`;
 }
 
 // ── Tool state ──────────────────────────────────────────────────────────────
@@ -641,14 +696,49 @@ function toast(msg) {
 const saveGame = () => store.saveGame();
 const closeSheet = () => { ui.sheet = null; renderSheet(); };
 
-function addPlayer(name) {
-  name = name.trim().slice(0, 24);
+function freeEmoji(taken = []) {
+  const used = new Set([...store.list('players').map((p) => p.emoji), ...taken]);
+  return EMOJIS.find((e) => !used.has(e)) || EMOJIS[Math.floor(Math.random() * EMOJIS.length)];
+}
+
+/**
+ * Add a crew player without creating duplicates. Pulls the latest crew list first (so a name
+ * added on another phone is seen), reuses an exact match, and asks about similar names.
+ * Returns the player to use, or null if cancelled.
+ */
+async function addCrewPlayer(name) {
+  name = name.trim().replace(/\s+/g, ' ').slice(0, 24);
   if (!name) return null;
-  const existing = store.list('players').find((p) => p.name.toLowerCase() === name.toLowerCase());
-  if (existing) return existing;
-  const used = new Set(store.list('players').map((p) => p.emoji));
-  const emoji = EMOJIS.find((e) => !used.has(e)) || EMOJIS[Math.floor(Math.random() * EMOJIS.length)];
-  return store.put('players', { id: uid('p_'), name, emoji });
+  if (syncConfigured()) {
+    try { await Promise.race([sync(), new Promise((r) => setTimeout(r, 4000))]); } catch { /* offline: check what we have */ }
+  }
+  const crew = store.list('players');
+  const exact = crew.find((p) => nameKey(p.name) === nameKey(name));
+  if (exact) { toast(`${exact.emoji} ${exact.name} already exists, so I picked them`); return exact; }
+  const near = crew.find((p) => similarNames(p.name, name));
+  if (near && confirm(`Did you mean ${near.emoji} ${near.name}?\n\nOK = use ${near.name}\nCancel = create a new player "${name}"`)) return near;
+  return store.put('players', { id: uid('p_'), name, emoji: freeEmoji() });
+}
+
+function makeGuest(name, takenEmojis = []) {
+  name = name.trim().replace(/\s+/g, ' ').slice(0, 24);
+  if (!name) return null;
+  return { id: uid('guest_'), name, emoji: freeEmoji(takenEmojis), guest: true };
+}
+
+/** Rewrite every finished game so `fromId` becomes `toId`, then remove `fromId`. Syncs to all phones. */
+function mergePlayers(fromId, toId) {
+  const to = store.get('players', toId);
+  if (!to) return 0;
+  let n = 0;
+  for (const g of store.list('games')) {
+    const updated = mergePlayerInGame(g, fromId, { id: to.id, name: to.name, emoji: to.emoji });
+    if (updated) { store.put('games', updated); n++; }
+  }
+  store.remove('players', fromId);
+  if (store.settings.meId === fromId) { store.settings.meId = toId; store.saveSettings(); }
+  ui.setup.playerIds = [...new Set(ui.setup.playerIds.map((id) => (id === fromId ? toId : id)))];
+  return n;
 }
 
 // ── Changing the game (on this phone, or live for everyone) ─────────────────
@@ -690,6 +780,15 @@ async function mutate(fn) {
     busy = false;
     document.body.classList.remove('busy');
   }
+}
+
+async function addToGame(p) {
+  if (store.game.players.some((x) => x.id === p.id)) { toast(`${p.name} is already playing`); return; }
+  const entry = { id: p.id, name: p.name, emoji: p.emoji, ...(p.guest ? { guest: true } : {}) };
+  const ok = await mutate((g) => { if (g.players.some((x) => x.id === p.id)) return false; g.players.push(entry); });
+  ui.sheet = null;
+  if (ok) toast(`${p.emoji} ${p.name} joined${p.guest ? ' as a guest' : ''}`);
+  render();
 }
 
 function dropGame(msg) {
@@ -777,6 +876,11 @@ function applyRemote({ version, state }, { quiet = false } = {}) {
   if (state.abandoned) { dropGame('The game was abandoned on another phone'); return; }
   const g = { ...state, live: { code: prev.live.code, version } };
   if (!quiet && g.log.length > prev.log.length) toast(describeEntry(g.log[g.log.length - 1], g));
+  const myTurnNow = isMe(g.players[g.turn]?.id) && !isMe(prev.players[prev.turn]?.id);
+  if (myTurnNow) {
+    setTimeout(() => toast('🎯 Your turn!'), quiet ? 0 : 1800);
+    try { navigator.vibrate?.([120, 60, 120]); } catch {}
+  }
   store.game = g;
   saveGame();
   if (ui.sheet && ['reject', 'menu'].includes(ui.sheet.type)) ui.sheet = null; // those were about the old state
@@ -1056,15 +1160,34 @@ const actions = {
     if (g.live && !(await mutate((d) => { d.abandoned = true; }))) return;
     dropGame();
   },
-  'add-to-game': async () => {
-    const name = prompt('Name of the player joining:');
+  'add-to-game': async ({ as }) => {
+    const name = prompt(as === 'guest' ? 'Name of the guest (this game only):' : 'Name of the crew player joining:');
     if (!name) return;
-    const p = addPlayer(name);
+    const p = as === 'guest' ? makeGuest(name, store.game.players.map((x) => x.emoji)) : await addCrewPlayer(name);
     if (!p) return;
-    if (store.game.players.some((x) => x.id === p.id)) return toast(`${p.name} is already playing`);
-    const ok = await mutate((g) => { if (g.players.some((x) => x.id === p.id)) return false; g.players.push({ id: p.id, name: p.name, emoji: p.emoji }); });
+    await addToGame(p);
+  },
+  'join-as-me': () => { const m = me(); if (m) addToGame(m); },
+  'set-me': ({ id }) => {
+    const p = store.get('players', id);
+    if (!p) return;
+    store.settings.meId = id; store.saveSettings();
+    if (!store.game && !ui.setup.playerIds.includes(id)) ui.setup.playerIds.push(id);
+    toast(`⭐ Hi ${p.name}! This phone knows it's you`);
+    if (ui.sheet?.type === 'player') ui.sheet = null;
+    render();
+  },
+  'remove-guest': ({ id }) => { ui.setup.guests = ui.setup.guests.filter((g) => g.id !== id); renderView(); },
+  'merge-player': ({ id }) => {
+    const from = store.get('players', id);
+    const toId = $('#merge-target')?.value;
+    const to = store.get('players', toId);
+    if (!from || !to) return;
+    if (store.game?.players.some((p) => p.id === id)) return toast(`${from.name} is in the game that's running. End it first`);
+    if (!confirm(`Merge ${from.emoji} ${from.name} into ${to.emoji} ${to.name}?\n\nAll of ${from.name}'s games and points move to ${to.name}, and ${from.name} is removed. This applies on every phone and can't be undone.`)) return;
+    const n = mergePlayers(id, toId);
     ui.sheet = null;
-    if (ok) toast(`${p.emoji} ${p.name} joined`);
+    toast(`🔗 Merged: ${n} game${n === 1 ? '' : 's'} moved to ${to.name}`);
     render();
   },
   'live-info': () => { ui.sheet = { type: 'live' }; renderSheet(); },
@@ -1124,8 +1247,15 @@ const actions = {
   'rec-sort': ({ v }) => { ui.records.sort = v; renderView(); },
   'edit-player': ({ id }) => { ui.sheet = { type: 'player', id }; renderSheet(); },
   'delete-player': ({ id }) => {
-    if (!confirm('Delete this player? Their past games stay in the records.')) return;
-    store.remove('players', id); ui.setup.playerIds = ui.setup.playerIds.filter((x) => x !== id); ui.sheet = null; render();
+    const p = store.get('players', id);
+    const n = gamesPerPlayer()[id] || 0;
+    const msg = n
+      ? `${p?.name} has ${n} game${n === 1 ? '' : 's'} in the records.\n\nIf they're a duplicate of someone, Cancel and use "Merge into" instead.\n\nDelete anyway? (Their games stay under the old name.)`
+      : `Delete ${p?.name} for everyone in the crew?`;
+    if (!confirm(msg)) return;
+    store.remove('players', id);
+    if (store.settings.meId === id) { store.settings.meId = ''; store.saveSettings(); }
+    ui.setup.playerIds = ui.setup.playerIds.filter((x) => x !== id); ui.sheet = null; render();
   },
   // Settings
   'sync-now': async () => {
@@ -1151,6 +1281,10 @@ const actions = {
 const changeActions = {
   'setup-location': (el) => { ui.setup.useLocation = el.checked; if (el.checked) startGeo(); renderView(); },
   'setup-live': (el) => { ui.setup.live = el.checked; renderView(); },
+  'set-me-select': (el) => {
+    if (el.value) return actions['set-me']({ id: el.value });
+    store.settings.meId = ''; store.saveSettings(); toast('This phone no longer knows who you are'); renderView();
+  },
   'range': async (el) => {
     store.settings.range = Number(el.value); store.saveSettings();
     if (store.game) await mutate((g) => { g.range = store.settings.range; });
@@ -1194,10 +1328,19 @@ const changeActions = {
 };
 
 const formActions = {
-  'add-player': (form) => {
-    const p = addPlayer(form.name.value);
-    if (!p) return;
-    if (ui.tab === 'play' && !ui.setup.playerIds.includes(p.id)) ui.setup.playerIds.push(p.id);
+  'add-player': async (form, submitter) => {
+    const name = form.name.value;
+    if (!name.trim()) return;
+    if (submitter?.value === 'guest') {
+      const g = makeGuest(name, ui.setup.guests.map((x) => x.emoji));
+      if (ui.setup.guests.some((x) => nameKey(x.name) === nameKey(g.name))) { toast(`${g.name} is already a guest`); return; }
+      ui.setup.guests.push(g);
+      toast(`${g.emoji} ${g.name} plays as a guest`);
+    } else {
+      const p = await addCrewPlayer(name);
+      if (!p) return;
+      if (ui.tab === 'play' && !ui.setup.playerIds.includes(p.id)) ui.setup.playerIds.push(p.id);
+    }
     renderView();
     $('[data-form="add-player"] input')?.focus();
   },
@@ -1241,7 +1384,7 @@ document.addEventListener('submit', (e) => {
   const form = e.target.closest('[data-form]');
   if (!form) return;
   e.preventDefault();
-  formActions[form.dataset.form]?.(form);
+  formActions[form.dataset.form]?.(form, e.submitter);
 });
 
 // Clocks: timers, stopwatches and the game countdown.
@@ -1277,6 +1420,8 @@ if (!store.game && store.list('players').length) {
   const last = store.list('games').sort((a, b) => b.endedAt - a.endedAt)[0];
   if (last) ui.setup.playerIds = last.players.map((p) => p.id).filter((id) => store.get('players', id));
 }
+// You are always picked on your own phone.
+if (me() && !ui.setup.playerIds.includes(store.settings.meId)) ui.setup.playerIds.unshift(store.settings.meId);
 render();
 autoSync();
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('./sw.js').catch(() => {});

@@ -1,7 +1,7 @@
 // Offline support. Serves the app from cache instantly, and refreshes the cache in the
 // background, so a new version pushed to GitHub shows up on the next launch.
 // Bump CACHE when you change the list of files.
-const CACHE = 'adventure-deck-v2.1.1';
+const CACHE = 'adventure-deck-v2.2.0';
 const SHELL = [
   './', './index.html', './manifest.webmanifest', './css/app.css',
   './js/app.js', './js/rules.js', './js/store.js', './js/tools.js', './js/live.js',
