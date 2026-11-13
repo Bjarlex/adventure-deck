@@ -11,39 +11,39 @@ export const DIFF = {
 };
 
 export const WHO = {
-  solo:   { label: 'Solo',     icon: '👤', hint: 'The player on turn does it and scores' },
-  duo:    { label: 'Duo',      icon: '👥', hint: 'The player on turn picks a partner. Both score' },
-  group:  { label: 'Everyone', icon: '🙌', hint: 'Everyone takes part and everyone scores' },
-  versus: { label: 'Versus',   icon: '⚔️', hint: 'Compete. Only the winner(s) score' },
+  solo:   { label: 'Solo',     icon: '👤', color: '#2f5d8a', hint: 'The player on turn does it and scores' },
+  duo:    { label: 'Duo',      icon: '👥', color: '#8a5cd0', hint: 'The player on turn picks a partner. Both score' },
+  group:  { label: 'Everyone', icon: '🙌', color: '#1f8f82', hint: 'Everyone takes part and everyone scores' },
+  versus: { label: 'Versus',   icon: '⚔️', color: '#c8473b', hint: 'Compete. Only the winner(s) score' },
 };
 
 export const TAGS = {
-  strangers: { label: 'Strangers', icon: '🗣️' },
-  physical:  { label: 'Physical',  icon: '💪' },
-  creative:  { label: 'Creative',  icon: '🎨' },
-  food:      { label: 'Food',      icon: '🍕' },
-  drinks:    { label: 'Drinks',    icon: '🍺' },
-  culture:   { label: 'Culture',   icon: '🏛️' },
-  photo:     { label: 'Photo',     icon: '📸' },
-  explore:   { label: 'Explore',   icon: '🧭' },
-  silly:     { label: 'Silly',     icon: '🤪' },
-  water:     { label: 'Harbour',   icon: '🌊' },
-  transit:   { label: 'Transit',   icon: '🚇' },
-  chill:     { label: 'Chill',     icon: '😌' },
-  indoor:    { label: 'Indoors',   icon: '🏠' },
+  strangers: { label: 'Strangers', icon: '🗣️', color: '#d9536f' },
+  physical:  { label: 'Physical',  icon: '💪', color: '#c8473b' },
+  creative:  { label: 'Creative',  icon: '🎨', color: '#8a5cd0' },
+  food:      { label: 'Food',      icon: '🍕', color: '#e07b2e' },
+  drinks:    { label: 'Drinks',    icon: '🍺', color: '#b8862b' },
+  culture:   { label: 'Culture',   icon: '🏛️', color: '#4a63c9' },
+  photo:     { label: 'Photo',     icon: '📸', color: '#c9508f' },
+  explore:   { label: 'Explore',   icon: '🧭', color: '#1f8f82' },
+  silly:     { label: 'Silly',     icon: '🤪', color: '#c9a227' },
+  water:     { label: 'Harbour',   icon: '🌊', color: '#2f7fc4' },
+  transit:   { label: 'Transit',   icon: '🚇', color: '#62728a' },
+  chill:     { label: 'Chill',     icon: '😌', color: '#3f9d64' },
+  indoor:    { label: 'Indoors',   icon: '🏠', color: '#946c4c' },
 };
 
 // ── When a card can be played ───────────────────────────────────────────────
 // A card's optional `needs` list; it is only dealt when all of them hold right now.
 export const NEEDS = {
-  summer:   { label: 'Summer (May–Sep)',         icon: '☀️' },
-  winter:   { label: 'Winter (Nov–Mar)',         icon: '❄️' },
-  xmas:     { label: 'Christmas (15 Nov–Dec)',   icon: '🎄' },
-  daylight: { label: 'Daylight',                 icon: '🌤️' },
-  dark:     { label: 'After dark',               icon: '🌙' },
-  daytime:  { label: 'Opening hours (10–17)',    icon: '🕙' },
-  dry:      { label: 'Not raining',              icon: '🌂' },
-  rain:     { label: 'Raining',                  icon: '🌧️' },
+  summer:   { label: 'Summer (May–Sep)',         icon: '☀️', color: '#e09a1f' },
+  winter:   { label: 'Winter (Nov–Mar)',         icon: '❄️', color: '#5b8fc4' },
+  xmas:     { label: 'Christmas (15 Nov–Dec)',   icon: '🎄', color: '#b33a3a' },
+  daylight: { label: 'Daylight',                 icon: '🌤️', color: '#d9a42b' },
+  dark:     { label: 'After dark',               icon: '🌙', color: '#3b4a7a' },
+  daytime:  { label: 'Opening hours (10–17)',    icon: '🕙', color: '#62728a' },
+  dry:      { label: 'Not raining',              icon: '🌂', color: '#946c4c' },
+  rain:     { label: 'Raining',                  icon: '🌧️', color: '#2f7fc4' },
 };
 const CPH = { lat: 55.68, lng: 12.57 };
 
@@ -99,7 +99,7 @@ export function fitsConditions(card, cond) {
 export const TOOLS = {
   timer:     { label: 'Timer',          icon: '⏱️' },
   stopwatch: { label: 'Stopwatch',      icon: '⏲️' },
-  photo:     { label: 'Photo proof',    icon: '📷' },
+  photo:     { label: 'Photo proof',    icon: '📷', color: '#c9508f' },
   bingo:     { label: 'Sound Bingo',    icon: '🔔' },
   station:   { label: 'Random station', icon: '🚆' },
   compass:   { label: 'Direction',      icon: '🧭' },
@@ -122,26 +122,26 @@ export const REJECT_ESCALATION = 5; // …plus 5 for every earlier paid rejectio
 export const PENANCE_KEEP = { 1: 0.5, 2: 0.25 }; // light penance halves the loss, heavy keeps a quarter
 
 export const MODES = [
-  { id: 'classic',  name: 'Classic',    icon: '🃏', desc: 'The whole deck. 1 free veto each. A penance is offered 40% of the time.',
+  { id: 'classic',  name: 'Classic',    icon: '🃏', color: '#3d6fa8', desc: 'The whole deck. 1 free veto each. A penance is offered 40% of the time.',
     filter: {}, rules: { freeVetoes: 1, penanceChance: 0.4, mult: 1 } },
-  { id: 'quick',    name: 'Quick walk', icon: '⚡', desc: 'Only cards of 10 minutes or less. 6 rounds.',
+  { id: 'quick',    name: 'Quick walk', icon: '⚡', color: '#d9981c', desc: 'Only cards of 10 minutes or less. 6 rounds.',
     filter: { maxMins: 10 }, rules: { freeVetoes: 1, penanceChance: 0.4, mult: 1, rounds: 6 } },
-  { id: 'explorer', name: 'Explorer',   icon: '🧭', desc: 'Location cards come first. Walk to spots within range, or pick a nearby one yourselves. Needs GPS.',
+  { id: 'explorer', name: 'Explorer',   icon: '🧭', color: '#1f7a74', desc: 'Location cards come first. Walk to spots within range, or pick a nearby one yourselves. Needs GPS.',
     filter: {}, rules: { freeVetoes: 1, penanceChance: 0.4, mult: 1, placeBias: 0.7, pickNearby: true, needsLocation: true } },
-  { id: 'bar',      name: 'Bar crawl',  icon: '🍻', desc: 'Food, drinks, strangers and silliness. 2 free vetoes.',
+  { id: 'bar',      name: 'Bar crawl',  icon: '🍻', color: '#b8862b', desc: 'Food, drinks, strangers and silliness. 2 free vetoes.',
     filter: { anyTags: ['food', 'drinks', 'strangers', 'silly'] }, rules: { freeVetoes: 2, penanceChance: 0.3, mult: 1 } },
-  { id: 'sweat',    name: 'Sweat',      icon: '💪', desc: 'Medium cards and harder. No free vetoes, a penance is always offered, and points ×1.5.',
+  { id: 'sweat',    name: 'Sweat',      icon: '💪', color: '#c8473b', desc: 'Medium cards and harder. No free vetoes, a penance is always offered, and points ×1.5.',
     filter: { minDiff: 2 }, rules: { freeVetoes: 0, penanceChance: 1, mult: 1.5 } },
-  { id: 'chill',    name: 'Chill',      icon: '😌', desc: 'No physical or stranger cards. 2 free vetoes, no penances.',
+  { id: 'chill',    name: 'Chill',      icon: '😌', color: '#3f9d64', desc: 'No physical or stranger cards. 2 free vetoes, no penances.',
     filter: { noTags: ['physical', 'strangers'] }, rules: { freeVetoes: 2, penanceChance: 0, mult: 1 } },
-  { id: 'crew',     name: 'Crew cards', icon: '✍️', desc: 'Only the cards you made yourselves.',
+  { id: 'crew',     name: 'Crew cards', icon: '✍️', color: '#8a5cd0', desc: 'Only the cards you made yourselves.',
     filter: { customOnly: true }, rules: { freeVetoes: 1, penanceChance: 0.4, mult: 1 } },
-  { id: 'custom',   name: 'Custom',     icon: '🛠️', desc: 'Pick the tags, length, difficulty and rules yourselves.',
+  { id: 'custom',   name: 'Custom',     icon: '🛠️', color: '#62728a', desc: 'Pick the tags, length, difficulty and rules yourselves.',
     filter: {}, rules: { freeVetoes: 1, penanceChance: 0.4, mult: 1 }, custom: true },
   // Indoor modes: their own decks, no walking.
-  { id: 'couch',    name: 'Couch',      icon: '🛋️', desc: 'No walking. Would you rather, jokes, deep questions and quick party games for the sofa.',
+  { id: 'couch',    name: 'Couch',      icon: '🛋️', color: '#c9508f', desc: 'No walking. Would you rather, jokes, deep questions and quick party games for the sofa.',
     filter: { deck: 'couch' }, rules: { freeVetoes: 2, penanceChance: 0.25, mult: 1 }, indoor: true },
-  { id: 'cod',      name: 'CoD splitscreen', icon: '🎮', desc: 'The app picks the game, map, mode, house rule and who plays. Only games your splitscreen supports for the player count.',
+  { id: 'cod',      name: 'CoD splitscreen', icon: '🎮', color: '#4d5a2a', desc: 'The app picks the game, map, mode, house rule and who plays. Only games your splitscreen supports for the player count.',
     filter: { deck: 'cod' }, rules: { freeVetoes: 1, penanceChance: 0, mult: 1 }, indoor: true, generated: 'cod' },
 ];
 export const modeById = Object.fromEntries(MODES.map((m) => [m.id, m]));
@@ -502,7 +502,7 @@ export function mergePlayerInGame(game, fromId, to) {
 /** All-time leaderboard from finished games. Guests and deleted players (ids in `hidden`) are left out. */
 export function leaderboard(games, players, hidden = new Set()) {
   const rows = {};
-  const ensure = (p) => (rows[p.id] ??= { id: p.id, name: p.name, emoji: p.emoji, games: 0, wins: 0, points: 0, best: null, done: 0, rejected: 0, penances: 0, places: 0 });
+  const ensure = (p) => (rows[p.id] ??= { id: p.id, name: p.name, emoji: p.emoji, color: p.color, games: 0, wins: 0, points: 0, best: null, done: 0, rejected: 0, penances: 0, places: 0 });
   for (const g of games) {
     for (const p of g.players) {
       if (isGuest(p) || hidden.has(p.id)) continue;
@@ -518,7 +518,7 @@ export function leaderboard(games, players, hidden = new Set()) {
     }
   }
   // Prefer current names and emojis from the player list.
-  for (const p of players) if (rows[p.id]) Object.assign(rows[p.id], { name: p.name, emoji: p.emoji });
+  for (const p of players) if (rows[p.id]) Object.assign(rows[p.id], { name: p.name, emoji: p.emoji, ...(p.color ? { color: p.color } : {}) });
   return Object.values(rows);
 }
 

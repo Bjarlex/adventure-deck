@@ -22,8 +22,40 @@ import { COD_GAMES } from './data/cod.js';
 import { VERSION } from './version.js';
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+// Older players have an emoji in their data; new ones still get one so older app versions keep working.
 const EMOJIS = ['🦊', '🐻', '🐼', '🐸', '🦁', '🐯', '🐨', '🐵', '🦄', '🐙', '🦉', '🐧', '🐳', '🦖', '🐝', '🦀', '🐢', '🦩', '🐺', '🦦', '🐲', '🦔', '🐞', '🦜'];
 const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+
+// ── Design: player colors, line icons ───────────────────────────────────────
+/** Player colors: mid-dark tones that carry white initials in light and dark mode. */
+const PLAYER_COLORS = ['#c8473b', '#e07b2e', '#b8860b', '#3f9d64', '#1f8f82', '#2f7fc4', '#4a63c9', '#8a5cd0', '#c9508f', '#62728a', '#946c4c', '#7a8a2e'];
+function colorFor(p) {
+  if (p?.color) return p.color;
+  let h = 0;
+  for (const ch of String(p?.id || p?.name || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return PLAYER_COLORS[h % PLAYER_COLORS.length];
+}
+const initials = (name) => String(name || '?').trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase() || '?';
+/** A round colored avatar with the player's initial(s). */
+const avatar = (p, size = '') => `<span class="av ${size}" style="--c:${colorFor(p)}">${esc(initials(p?.name))}</span>`;
+/** The snapshot of a player stored in a game (keeps the color for history and other phones). */
+const snap = (p) => ({ id: p.id, name: p.name, emoji: p.emoji, ...(colorFor(p) ? { color: colorFor(p) } : {}), ...(p.guest ? { guest: true } : {}) });
+
+const ICON_PATHS = {
+  play: '<rect x="3" y="6" width="12" height="15" rx="2"/><path d="M9 3h10a2 2 0 0 1 2 2v13"/>',
+  cards: '<path d="M4 6h16M4 12h16M4 18h11"/>',
+  trophy: '<path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4zM7 6H4a3 3 0 0 0 3 4M17 6h3a3 3 0 0 1-3 4"/>',
+  tools: '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/>',
+  settings: '<path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h12M20 18h0"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
+  pin: '<path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/>',
+  live: '<circle cx="12" cy="12" r="2"/><path d="M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7M5.6 5.6a9 9 0 0 0 0 12.8M18.4 5.6a9 9 0 0 1 0 12.8"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  gamepad: '<rect x="2" y="7" width="20" height="11" rx="5"/><path d="M7 11v3M5.5 12.5h3"/><circle cx="16" cy="11.5" r="1"/><circle cx="18" cy="13.5" r="1"/>',
+};
+const icon = (name, cls = '') => `<svg class="ic ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_PATHS[name] || ''}</svg>`;
+const AWARD_COLORS = { done: '#1f8f82', rejected: '#c9a227', penances: '#c8473b', places: '#2f7fc4', bonuses: '#e07b2e' };
+/** A colored dot, e.g. for tags and modes. */
+const dot = (color) => `<span class="dot" style="--c:${color}"></span>`;
 
 const LENGTHS = [['open', 'Open'], ['r3', '3 rounds'], ['r5', '5 rounds'], ['r6', '6 rounds'], ['r8', '8 rounds'], ['r12', '12 rounds'], ['t60', '60 min'], ['t90', '90 min'], ['t120', '2 hours']];
 
@@ -65,12 +97,12 @@ const chip = (label, on, act, data = {}) =>
 
 function badges(c) {
   return `<span class="badge d${c.diff}">${DIFF[c.diff].label}</span>`
-    + `<span class="badge">${WHO[c.who].icon} ${WHO[c.who].label}</span>`
-    + `<span class="badge">⏱ ${c.mins} min</span>`
-    + (c.place ? '<span class="badge place">📍 Spot</span>' : '')
-    + (c.tool ? `<span class="badge">${TOOLS[c.tool].icon}</span>` : '')
-    + (c.needs || []).map((n) => `<span class="badge when" title="${esc(NEEDS[n].label)}">${NEEDS[n].icon} ${esc(NEEDS[n].label.replace(/ \(.*\)/, ''))}</span>`).join('')
-    + (c.custom ? '<span class="badge crew">✍️ Crew</span>' : '');
+    + `<span class="badge tint" style="--c:${WHO[c.who].color}">${WHO[c.who].label}</span>`
+    + `<span class="badge">${c.mins} min</span>`
+    + (c.place ? `<span class="badge tint" style="--c:#1f7a74">${icon('pin', 'sm')}Spot</span>` : '')
+    + (c.tool ? `<span class="badge">${esc(TOOLS[c.tool].label)}</span>` : '')
+    + (c.needs || []).map((n) => `<span class="badge when tint" style="--c:${NEEDS[n].color}" title="${esc(NEEDS[n].label)}">${esc(NEEDS[n].label.replace(/ \(.*\)/, ''))}</span>`).join('')
+    + (c.custom ? '<span class="badge tint" style="--c:#b8862b">Crew</span>' : '');
 }
 
 // ── Season, light and weather ───────────────────────────────────────────────
@@ -82,13 +114,13 @@ function conditions() {
 
 function conditionsLine(cond = currentConditions(new Date(), lastWeather())) {
   const parts = [];
-  if (cond.xmas) parts.push('🎄 Christmas season');
-  else if (cond.winter) parts.push('❄️ Winter');
-  else if (cond.summer) parts.push('☀️ Summer');
+  if (cond.xmas) parts.push('Christmas season');
+  else if (cond.winter) parts.push('Winter');
+  else if (cond.summer) parts.push('Summer');
   const sunset = cond.sunset.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  parts.push(cond.dark ? '🌙 Dark' : `🌤️ Light until ${sunset}`);
-  if (cond.raining === true) parts.push('🌧️ Raining');
-  else if (cond.raining === false) parts.push('🌂 Dry');
+  parts.push(cond.dark ? 'Dark' : `Light until ${sunset}`);
+  if (cond.raining === true) parts.push('Raining');
+  else if (cond.raining === false) parts.push('Dry');
   if (cond.temp != null) parts.push(`${cond.temp}°C`);
   return parts.join(' · ');
 }
@@ -101,8 +133,9 @@ async function refreshWeather() {
   await getWeather();
   if (JSON.stringify(lastWeather()) !== before && ui.tab === 'play' && !ui.sheet) renderView();
 }
-const tagLine = (c) => c.tags.map((t) => `<span class="tag">${TAGS[t].icon} ${TAGS[t].label}</span>`).join('');
-const pname = (p) => `${esc(p.emoji)} ${esc(p.name)}`;
+const tagLine = (c) => c.tags.map((t) => `<span class="tag">${dot(TAGS[t].color)}${TAGS[t].label}</span>`).join('');
+const pname = (p) => `${avatar(p, 'sm')}${esc(p.name)}`;
+const modeColor = (g) => modeById[g?.modeId]?.color || '#62728a';
 const fmtDate = (ts) => new Date(ts).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 
 function mapsLink(p) {
@@ -171,7 +204,7 @@ function setupGameDraft() {
   if (len.startsWith('r')) rules.rounds = Number(len.slice(1)); else delete rules.rounds;
   if (len.startsWith('t')) rules.minutes = Number(len.slice(1)); else delete rules.minutes;
   const players = [
-    ...s.playerIds.map((id) => store.get('players', id)).filter(Boolean).map(({ id, name, emoji }) => ({ id, name, emoji })),
+    ...s.playerIds.map((id) => store.get('players', id)).filter(Boolean).map(snap),
     ...s.guests,
   ];
   return { filter, rules, players, range: store.settings.range, useLocation: s.useLocation && !mode.indoor, log: [], used: [] };
@@ -196,13 +229,13 @@ function viewSetup() {
   return `
   <header class="hero">
     <h1>Copenhagen<br>Adventure Deck</h1>
-    <button class="crew-chip" data-act="goto-crews">${store.crew().local ? '📱' : '☁️'} ${esc(store.crew().name)} <small>change</small></button>
+    <button class="crew-chip" data-act="goto-crews">${store.crew().local ? '' : ''} ${esc(store.crew().name)} <small>change</small></button>
     <p class="muted">${allCards().length} cards in the deck · ${store.list('games').length} games played</p>
   </header>
 
   ${syncConfigured() ? `
   <section class="panel live-panel">
-    <h2>📡 Join a live game</h2>
+    <h2>Join a live game</h2>
     <form class="inline-add" data-form="join-live">
       <input name="code" placeholder="CODE" maxlength="4" autocomplete="off" autocapitalize="characters" spellcheck="false" class="code-input" value="${esc(ui.joinCode)}">
       <button class="btn primary">Join</button>
@@ -210,11 +243,11 @@ function viewSetup() {
     <p class="muted small">Someone started a game on their phone? Enter the 4-letter code shown at the top of their screen.</p>
   </section>` : ''}
 
-  ${store.crew().deleted ? `<div class="banner soft">🗑 The owner deleted "${esc(store.crew().name)}". You can still play here on this phone, but nothing syncs any more. <button class="btn small" data-act="goto-crews">Crews</button></div>` : ''}
+  ${store.crew().deleted ? `<div class="banner soft">The owner deleted "${esc(store.crew().name)}". You can still play here on this phone, but nothing syncs any more. <button class="btn small" data-act="goto-crews">Crews</button></div>` : ''}
 
   ${players.length && !me() ? `
   <section class="panel who-am-i">
-    <h2>👋 Which one are you?</h2>
+    <h2>Which one are you?</h2>
     <p class="muted small">Tell this phone who you are. It's then picked automatically, and you get "Your turn!" in live games. You can change it in Settings.</p>
     <div class="chips">${players.map((p) => chip(pname(p), false, 'set-me', { id: p.id })).join('')}</div>
   </section>` : ''}
@@ -234,15 +267,15 @@ function viewSetup() {
   <section class="panel">
     <h2>Game mode</h2>
     <div class="modes">${MODES.map((m) => `
-      <button class="mode ${m.id === s.modeId ? 'on' : ''}" data-act="setup-mode" data-id="${m.id}">
-        <span class="mode-icon">${m.icon}</span><b>${m.name}</b><small>${m.desc}</small>
+      <button class="mode ${m.id === s.modeId ? 'on' : ''}" data-act="setup-mode" data-id="${m.id}" style="--c:${m.color}">
+        <b>${m.name}</b><small>${m.desc}</small>
       </button>`).join('')}</div>
     ${mode.custom ? `
       <div class="custom-mode">
         <h3>Tags <small class="muted">tap: include → exclude → any</small></h3>
         <div class="chips">${Object.entries(TAGS).map(([k, t]) => {
           const v = c.tags[k];
-          return `<button class="chip ${v === 'any' ? 'on' : v === 'no' ? 'off' : ''}" data-act="cm-tag" data-tag="${k}">${v === 'no' ? '🚫' : t.icon} ${t.label}</button>`;
+          return `<button class="chip ${v === 'any' ? 'on' : v === 'no' ? 'off' : ''}" data-act="cm-tag" data-tag="${k}">${v === 'no' ? '' : t.icon} ${t.label}</button>`;
         }).join('')}</div>
         <h3>Max length per card</h3>
         <div class="chips">${[[0, 'Any'], [5, '5 min'], [10, '10 min'], [20, '20 min'], [30, '30 min'], [60, '1 hour']].map(([v, l]) => chip(l, c.maxMins === v, 'cm-set', { key: 'maxMins', val: v })).join('')}</div>
@@ -273,12 +306,12 @@ function viewSetup() {
         <input type="range" min="500" max="1000" step="50" value="${store.settings.range}" data-act-change="range">
       </label>
       <p class="muted small">${geoLine()} ${ui.here ? `· ${nearCount} location card${nearCount === 1 ? '' : 's'} in range` : ''}</p>
-      ${ui.geo !== 'on' ? '<button class="btn" data-act="geo-start">📍 Turn on GPS</button>' : ''}` : ''}
+      ${ui.geo !== 'on' ? '<button class="btn" data-act="geo-start">Turn on GPS</button>' : ''}` : ''}
     ${mode.rules.needsLocation && !s.useLocation ? '<p class="warn">Explorer works best with GPS on.</p>' : ''}
   </section>
 
   <section class="panel">
-    <h2>🌦️ Right now</h2>
+    <h2>Right now</h2>
     <p>${conditionsLine()}</p>
     <label class="switch-row"><input type="checkbox" data-act-change="match-conditions" ${store.settings.matchConditions !== false ? 'checked' : ''}> <span>Only deal cards that fit the season, daylight and weather</span></label>
     <p class="muted small">${store.settings.matchConditions !== false
@@ -287,10 +320,10 @@ function viewSetup() {
   </section>`}
 
   <section class="panel">
-    <h2>📡 Live on every phone</h2>
+    <h2>Live on every phone</h2>
     ${syncConfigured()
       ? `<label class="switch-row"><input type="checkbox" data-act-change="setup-live" ${s.live ? 'checked' : ''}> <span>Share this game live. Friends join with a code, and anyone can draw and score.</span></label>
-        ${s.live ? `<h3>🗳 Who confirms Done / Failed?</h3>
+        ${s.live ? `<h3>Who confirms Done / Failed?</h3>
         <div class="chips">${Object.entries(CONFIRM).map(([k, c]) => chip(c.label, s.confirm === k, 'setup-confirm', { v: k })).join('')}</div>
         <p class="muted small">${esc(CONFIRM[s.confirm].hint)} Vetoes never need confirming.</p>` : ''}`
       : '<p class="muted small">Set up crew sync in Settings to play one game across several phones.</p>'}
@@ -301,7 +334,7 @@ function viewSetup() {
       ? `Rounds are made up as you play, from ${ownedGames(store.settings.codGames).length} game${ownedGames(store.settings.codGames).length === 1 ? '' : 's'}.`
       : `${pool.length} card${pool.length === 1 ? '' : 's'} match this setup${draft.players.length < 2 ? ' (duo and versus cards need 2+ players)' : ''}`}</p>
     <button class="btn primary big" data-act="start-game" ${draft.players.length && (mode.generated ? ownedGames(store.settings.codGames).length : pool.length) ? '' : 'disabled'}>
-      ${draft.players.length ? `Start ${mode.icon} ${mode.name}${s.live && syncConfigured() ? ' live 📡' : ''}` : 'Pick at least one player'}
+      ${draft.players.length ? `Start ${mode.name}${s.live && syncConfigured() ? ' live' : ''}` : 'Pick at least one player'}
     </button>
   </div>
 
@@ -311,12 +344,12 @@ function viewSetup() {
 /** Setup panel for the indoor modes: which CoD games the crew has, or a note for Couch. */
 function codSetupPanel(mode) {
   if (!mode.generated) {
-    return `<section class="panel"><h2>🛋️ Couch rules</h2><p class="muted small">Only couch cards: no walking, no GPS, no weather. Some of these cards also turn up in walking games, but walking cards never come up here.</p></section>`;
+    return `<section class="panel"><h2>Couch rules</h2><p class="muted small">Only couch cards: no walking, no GPS, no weather. Some of these cards also turn up in walking games, but walking cards never come up here.</p></section>`;
   }
   const owned = store.settings.codGames || [];
   const n = ui.setup.playerIds.length + ui.setup.guests.length;
   return `<section class="panel">
-    <h2>🎮 Games you have</h2>
+    <h2>Games you have</h2>
     <p class="muted small">Tap the ones your crew owns (none ticked = all). The app only picks games and modes that fit ${n || 'your'} player${n === 1 ? '' : 's'} on one screen; if you're more, players take turns sitting out and refereeing.</p>
     <div class="chips">${COD_GAMES.map((x) => chip(`${esc(x.short)} <small>${x.maxSplit}P</small>`, owned.includes(x.id), 'cod-game', { id: x.id })).join('')}</div>
     <p class="muted small">${COD_GAMES.filter((x) => x.note).map((x) => `${esc(x.short)}: ${esc(x.note)}.`).join(' ')} Co-op/zombies rounds use each game's own co-op limit (mostly 2 players).</p>
@@ -328,8 +361,8 @@ function rulesBlock() {
     <summary>How scoring works</summary>
     <ul>
       <li><b>Points:</b> Easy ${DIFF[1].pts} · Medium ${DIFF[2].pts} · Hard ${DIFF[3].pts} · Epic ${DIFF[4].pts}. Location cards give +${PLACE_BONUS}, and checking in by GPS at the spot (within ${CHECKIN_RADIUS} m) gives +${CHECKIN_BONUS} more.</li>
-      <li><b>Who scores:</b> 👤 Solo: the player on turn. 👥 Duo: the player on turn and their partner. 🙌 Everyone: all players. ⚔️ Versus: only the winner(s).</li>
-      <li><b>🔥 Legendary:</b> the group can award +25% for a performance with real style.</li>
+      <li><b>Who scores:</b> Solo: the player on turn. Duo: the player on turn and their partner. Everyone: all players. Versus: only the winner(s).</li>
+      <li><b>Legendary:</b> the group can award +25% for a performance with real style.</li>
       <li><b>Failed:</b> you tried and it didn't work out. 0 points and no penalty, because trying counts.</li>
       <li><b>Rejecting:</b> free vetoes are used first (how many depends on the mode). After that a rejection costs half the card's points, plus 5 more for every earlier paid rejection you've made this game.</li>
       <li><b>Penance:</b> sometimes (how often depends on the mode) you're offered a physical penance when you reject. A light one halves the loss and a heavy one cuts it to a quarter. You can always just take the hit.</li>
@@ -339,7 +372,7 @@ function rulesBlock() {
 }
 
 function geoLine() {
-  return { off: 'GPS is off.', asking: 'Finding you…', on: `📍 GPS on${ui.here?.acc ? ` (±${Math.round(ui.here.acc)} m)` : ''}`, denied: '⚠️ Location permission denied. Allow it in your phone settings for this site.', unsupported: 'This browser has no GPS support.' }[ui.geo];
+  return { off: 'GPS is off.', asking: 'Finding you…', on: `GPS on${ui.here?.acc ? ` (±${Math.round(ui.here.acc)} m)` : ''}`, denied: 'Location permission denied. Allow it in your phone settings for this site.', unsupported: 'This browser has no GPS support.' }[ui.geo];
 }
 
 // ── In-game ────────────────────────────────────────────────────────────────
@@ -357,14 +390,14 @@ function viewGame() {
 
   return `
   <div class="game-top">
-    <span>${g.modeIcon} <b>${esc(g.modeName)}</b> · ${progress}</span>
-    <span>${g.live ? `<button class="live-pill ${ui.liveOk ? '' : 'bad'}" data-act="live-info">📡 ${esc(g.live.code)}</button>` : ''}${g.useLocation ? `<button class="gps-pill ${ui.geo}" data-act="geo-start">📍</button>` : ''}<button class="icon-btn" data-act="game-menu" aria-label="Game menu">⋯</button></span>
+    <span>${dot(modeColor(g))}<b>${esc(g.modeName)}</b> · ${progress}</span>
+    <span>${g.live ? `<button class="live-pill ${ui.liveOk ? '' : 'bad'}" data-act="live-info">${icon('live', 'sm')}${esc(g.live.code)}</button>` : ''}${g.useLocation ? `<button class="gps-pill ${ui.geo}" data-act="geo-start" aria-label="GPS">${icon('pin', 'sm')}</button>` : ''}<button class="icon-btn" data-act="game-menu" aria-label="Game menu">⋯</button></span>
   </div>
   <div class="scores">${g.players.map((p, i) => `
-    <div class="score ${i === g.turn ? 'turn' : ''} ${isMe(p.id) ? 'me' : ''}"><span class="em">${esc(p.emoji)}</span><span class="nm">${esc(p.name)}${isGuest(p) ? ' <small>guest</small>' : ''}</span><b>${stats[p.id].score}</b></div>`).join('')}
+    <div class="score ${i === g.turn ? 'turn' : ''} ${isMe(p.id) ? 'me' : ''}">${avatar(p)}<span class="nm">${esc(p.name)}${isGuest(p) ? ' <small>guest</small>' : ''}</span><b>${stats[p.id].score}</b></div>`).join('')}
   </div>
   ${me() && !g.players.some((p) => isMe(p.id)) ? `<div class="banner soft">You're not in this game. <button class="btn small" data-act="join-as-me">＋ Join as ${pname(me())}</button></div>` : ''}
-  ${over ? `<div class="banner">${over === 'time' ? "⏰ Time's up!" : '🏁 Last round played!'} <button class="btn primary" data-act="end-game">See the podium</button></div>` : ''}
+  ${over ? `<div class="banner">${over === 'time' ? "Time's up!" : 'Last round played!'} <button class="btn primary" data-act="end-game">See the podium</button></div>` : ''}
   ${card ? viewCurrentCard(g, card, stats, turnP) : viewDrawArea(g, turnP)}`;
 }
 
@@ -373,16 +406,16 @@ function viewDrawArea(g, turnP) {
   const near = g.useLocation ? nearbyCards(allCards(), g, here, conditions()) : [];
   return `
   <div class="draw-area">
-    <p class="turn-label ${isMe(turnP.id) ? 'mine' : ''}">${isMe(turnP.id) ? `🎯 Your turn, ${esc(turnP.name)}!` : `${pname(turnP)}'s turn`}</p>
+    <p class="turn-label ${isMe(turnP.id) ? 'mine' : ''}">${isMe(turnP.id) ? `Your turn, ${esc(turnP.name)}!` : `${pname(turnP)}'s turn`}</p>
     ${conditions() && !modeById[g.modeId]?.indoor ? `<p class="muted small cond-line">${conditionsLine()}</p>` : ''}
     ${canAct(g)
-      ? `<button class="deck-btn" data-act="draw"><span>${g.filter?.deck === 'cod' ? '🎮' : '🃏'}</span>${g.filter?.deck === 'cod' ? 'Next round' : 'Draw a card'}</button>
+      ? `<button class="deck-btn" data-act="draw">${icon(g.filter?.deck === 'cod' ? 'gamepad' : 'play', 'lg')}${g.filter?.deck === 'cod' ? 'Next round' : 'Draw a card'}</button>
          <button class="btn ghost" data-act="skip-turn">Skip to next player</button>`
-      : `<div class="deck-btn waiting-turn"><span>⏳</span>Waiting for ${esc(turnP.name)} to draw</div>`}
+      : `<div class="deck-btn waiting-turn">${icon('clock', 'lg')}Waiting for ${esc(turnP.name)} to draw</div>`}
   </div>
   ${g.useLocation ? `
   <section class="panel">
-    <h2>📍 Spots in range <small class="muted">${g.range} m</small></h2>
+    <h2>Spots in range <small class="muted">${g.range} m</small></h2>
     ${!here ? `<p class="muted small">${geoLine()}</p>` : near.length ? `<ul class="near-list">${near.slice(0, 8).map(({ card: c, dist }) => `
       <li><div><b>${esc(c.title)}</b><small>${esc(resolvePlace(c).name)} · ${fmtDistance(dist)} ${compassLabel(bearingDeg(here, resolvePlace(c)))} · +${cardPoints(c, g.rules)}</small></div>
       ${g.rules.pickNearby && canAct(g) ? `<button class="btn small" data-act="take-card" data-id="${c.id}">Take</button>` : ''}</li>`).join('')}</ul>
@@ -402,18 +435,18 @@ function viewCurrentCard(g, card, stats, turnP) {
 
   const needsPick = (card.who === 'duo' && !cur.partners.length) || (card.who === 'versus' && !cur.winners.length);
   let pickers = '';
-  if (card.who === 'duo') pickers = `<div class="picker ${needsPick ? 'needed' : ''}"><p class="pick-label">👥 Who was your partner?</p><div class="chips">${others.map((p) => chip(pname(p), cur.partners.includes(p.id), 'pick-partner', { id: p.id })).join('')}</div></div>`;
+  if (card.who === 'duo') pickers = `<div class="picker ${needsPick ? 'needed' : ''}"><p class="pick-label">Who was your partner?</p><div class="chips">${others.map((p) => chip(pname(p), cur.partners.includes(p.id), 'pick-partner', { id: p.id })).join('')}</div></div>`;
   if (card.who === 'versus' && card.teams) {
     // Team rounds (CoD): pick the winning team in one tap.
-    pickers = `<div class="picker ${needsPick ? 'needed' : ''}"><p class="pick-label">⚔️ Which team won?</p><div class="chips">${card.teams.map((t, i) => chip(`${['🟥', '🟦', '🟩', '🟨'][i]} ${t.map((id) => esc(g.players.find((p) => p.id === id)?.name)).join(' & ')}`, t.length && t.every((id) => cur.winners.includes(id)) && cur.winners.length === t.length, 'pick-team', { i })).join('')}</div></div>`;
+    pickers = `<div class="picker ${needsPick ? 'needed' : ''}"><p class="pick-label">Which team won?</p><div class="chips">${card.teams.map((t, i) => chip(`<span class="team-dot t${i}"></span>${t.map((id) => esc(g.players.find((p) => p.id === id)?.name)).join(' & ')}`, t.length && t.every((id) => cur.winners.includes(id)) && cur.winners.length === t.length, 'pick-team', { i })).join('')}</div></div>`;
   } else if (card.who === 'versus') {
     const field = card.players ? g.players.filter((p) => card.players.includes(p.id)) : g.players;
-    pickers = `<div class="picker ${needsPick ? 'needed' : ''}"><p class="pick-label">⚔️ ${myPlayerIn(g) ? 'Or pick who won' : 'Who won?'} <small class="muted">Tap one or more</small></p><div class="chips">${field.map((p) => chip(pname(p), cur.winners.includes(p.id), 'pick-winner', { id: p.id })).join('')}</div></div>`;
+    pickers = `<div class="picker ${needsPick ? 'needed' : ''}"><p class="pick-label">${myPlayerIn(g) ? 'Or pick who won' : 'Who won?'} <small class="muted">Tap one or more</small></p><div class="chips">${field.map((p) => chip(pname(p), cur.winners.includes(p.id), 'pick-winner', { id: p.id })).join('')}</div></div>`;
   }
-  if (card.who === 'group') pickers = '<p class="pick-label">🙌 Everyone scores</p>';
+  if (card.who === 'group') pickers = '<p class="pick-label">Everyone scores</p>';
 
   return `
-  <p class="turn-label ${isMe(turnP.id) ? 'mine' : ''}">${isMe(turnP.id) ? '🎯 Your card!' : `${pname(turnP)}'s card`}</p>
+  <p class="turn-label ${isMe(turnP.id) ? 'mine' : ''}">${isMe(turnP.id) ? 'Your card!' : `${pname(turnP)}'s card`}</p>
   <article class="card d${card.diff}">
     <div class="card-band"><span>${DIFF[card.diff].label}</span><span>+${cardPoints(card, g.rules)}</span></div>
     <h2>${esc(card.title)}</h2>
@@ -422,7 +455,7 @@ function viewCurrentCard(g, card, stats, turnP) {
     <div class="tags">${tagLine(card)}</div>
     ${place ? `
       <div class="place-box">
-        <div><b>📍 ${esc(place.name)}</b><br><small>${placeInfo(card)}</small></div>
+        <div><b>${esc(place.name)}</b><br><small>${placeInfo(card)}</small></div>
         <div class="row">
           <a class="btn small" href="${mapsLink(place)}" target="_blank" rel="noopener">Directions</a>
           ${cur.checkin ? '<span class="badge ok">✓ Checked in</span>' : `<button class="btn small" data-act="checkin" ${canCheckin ? '' : 'disabled'}>Check in +${CHECKIN_BONUS}</button>`}
@@ -430,20 +463,20 @@ function viewCurrentCard(g, card, stats, turnP) {
       </div>` : ''}
   </article>
   ${card.tool ? renderTool(card.tool, toolState('game', card.tool), { scope: 'game', card, players: g.players }) : ''}
-  <button class="btn ghost small" data-act="open-tools">🧰 Other tools</button>
+  <button class="btn ghost small" data-act="open-tools">Other tools</button>
 
   ${cur.claim ? viewClaim(g, card, pts, rc) : `
   <section class="panel resolve">
     ${pickers}
-    <label class="switch-row"><input type="checkbox" data-act-change="bonus" ${cur.bonus ? 'checked' : ''}> <span>🔥 Legendary (+25%)</span></label>
+    <label class="switch-row"><input type="checkbox" data-act-change="bonus" ${cur.bonus ? 'checked' : ''}> <span>Legendary (+25%)</span></label>
     <div class="resolve-btns">
-      ${card.who === 'versus' && myPlayerIn(g) && !card.teams ? `<button class="btn ok big" data-act="i-won">🏆 I won <small>+${pts}</small></button>` : ''}
-      ${card.who === 'versus' && myPlayerIn(g) && card.teams ? card.teams.map((t, i) => t.includes(myPlayerIn(g)) ? `<button class="btn ok big" data-act="team-won" data-i="${i}">🏆 My team won <small>+${pts} each</small></button>` : '').join('') : ''}
-      <button class="btn ${card.who === 'versus' && myPlayerIn(g) ? '' : 'ok big'} ${needsPick ? 'waiting' : ''}" data-act="resolve-done">✅ ${card.who === 'versus' && myPlayerIn(g) ? 'Someone else won' : 'Done'} <small>${needsPick ? (card.who === 'duo' ? 'pick a partner first' : 'pick the winner first') : `+${pts}`}</small></button>
-      <button class="btn" data-act="resolve-fail">😅 Failed <small>0</small></button>
-      ${canVeto(g) ? `<button class="btn bad" data-act="open-reject">🙅 Reject <small>${rc.free ? 'free veto' : `−${rc.cost}`}</small></button>` : `<button class="btn bad" disabled>🙅 Only ${esc(turnP.name)} can veto</button>`}
+      ${card.who === 'versus' && myPlayerIn(g) && !card.teams ? `<button class="btn ok big" data-act="i-won">I won <small>+${pts}</small></button>` : ''}
+      ${card.who === 'versus' && myPlayerIn(g) && card.teams ? card.teams.map((t, i) => t.includes(myPlayerIn(g)) ? `<button class="btn ok big" data-act="team-won" data-i="${i}">My team won <small>+${pts} each</small></button>` : '').join('') : ''}
+      <button class="btn ${card.who === 'versus' && myPlayerIn(g) ? '' : 'ok big'} ${needsPick ? 'waiting' : ''}" data-act="resolve-done">${card.who === 'versus' && myPlayerIn(g) ? 'Someone else won' : 'Done'} <small>${needsPick ? (card.who === 'duo' ? 'pick a partner first' : 'pick the winner first') : `+${pts}`}</small></button>
+      <button class="btn" data-act="resolve-fail">Failed <small>0</small></button>
+      ${canVeto(g) ? `<button class="btn bad" data-act="open-reject">Reject <small>${rc.free ? 'free veto' : `−${rc.cost}`}</small></button>` : `<button class="btn bad" disabled>Only ${esc(turnP.name)} can veto</button>`}
     </div>
-    ${needsConfirmation(g) ? `<p class="muted small center">🗳 Done and Failed need a majority of the players (${votesNeeded(g)} of ${claimVoters(g).length}); your claim counts as your yes. A veto is instant.</p>` : ''}
+    ${needsConfirmation(g) ? `<p class="muted small center">Done and Failed need a majority of the players (${votesNeeded(g)} of ${claimVoters(g).length}); your claim counts as your yes. A veto is instant.</p>` : ''}
   </section>`}`;
 }
 
@@ -456,24 +489,24 @@ function viewClaim(g, card, pts, rc) {
   const yes = voters.filter((p) => claim.votes[p.id] === 'yes').length;
   const needed = votesNeeded(g);
   const what = claim.type === 'done'
-    ? `✅ <b>Done</b>: ${winnersText(g, card)} would get <b>+${pts}</b>`
-    : '😅 <b>Failed</b>: no points, no penalty';
+    ? `<b>Done</b>: ${winnersText(g, card)} would get <b>+${pts}</b>`
+    : '<b>Failed</b>: no points, no penalty';
   const mine = myPlayerIn(g);
   const canWithdraw = !mine || !claim.by || claim.by === mine || g.players[g.turn].id === mine;
   return `<section class="panel resolve claim">
-    <p class="pick-label">🗳 ${claimer ? pname(claimer) : 'Someone'} says:</p>
+    <p class="pick-label">${claimer ? pname(claimer) : 'Someone'} says:</p>
     <p class="claim-what">${what}</p>
     <ul class="votes">${voters.map((p) => {
       const v = claim.votes[p.id];
-      return `<li><span>${pname(p)}</span>${v ? `<b class="vote ${v}">${v === 'yes' ? '✅ Confirmed' : '❌ No'}</b>`
-        : canVoteAs(g, p.id) ? `<span class="row"><button class="btn small ok" data-act="vote" data-id="${p.id}" data-v="yes">✅ Confirm</button><button class="btn small bad" data-act="vote" data-id="${p.id}" data-v="no">❌ No</button></span>`
-        : '<span class="muted">⏳ waiting</span>'}</li>`;
+      return `<li><span>${pname(p)}</span>${v ? `<b class="vote ${v}">${v === 'yes' ? 'Confirmed' : 'No'}</b>`
+        : canVoteAs(g, p.id) ? `<span class="row"><button class="btn small ok" data-act="vote" data-id="${p.id}" data-v="yes">Confirm</button><button class="btn small bad" data-act="vote" data-id="${p.id}" data-v="no">No</button></span>`
+        : '<span class="muted">waiting</span>'}</li>`;
     }).join('')}</ul>
     <p class="muted small">${yes} of ${needed} yes votes needed (a majority of ${voters.length} players).</p>
     <div class="row">
-      ${canWithdraw ? '<button class="btn small" data-act="withdraw-claim">↩️ Withdraw</button>' : ''}
-      ${claimCanBeForced(g) ? '<button class="btn small" data-act="force-claim">⏱ Accept as it stands</button>' : ''}
-      ${canVeto(g) ? `<button class="btn small bad" data-act="open-reject">🙅 Veto instead <small>${rc.free ? 'free' : `−${rc.cost}`}</small></button>` : ''}
+      ${canWithdraw ? '<button class="btn small" data-act="withdraw-claim">Withdraw</button>' : ''}
+      ${claimCanBeForced(g) ? '<button class="btn small" data-act="force-claim">Accept as it stands</button>' : ''}
+      ${canVeto(g) ? `<button class="btn small bad" data-act="open-reject">Veto instead <small>${rc.free ? 'free' : `−${rc.cost}`}</small></button>` : ''}
     </div>
   </section>`;
 }
@@ -491,14 +524,14 @@ function viewSummary(game) {
   const byId = Object.fromEntries(game.players.map((p) => [p.id, p]));
   const podium = rows.slice(0, 3);
   return `
-  <header class="hero"><h1>🏆 ${game.winnerIds.map((id) => esc(byId[id]?.name)).join(' & ')} win${game.winnerIds.length > 1 ? '' : 's'}!</h1>
-  <p class="muted">${game.modeIcon || ''} ${esc(game.modeName)} · ${game.log.length} cards · ${Math.round((game.endedAt - game.startedAt) / 60000)} min</p></header>
-  <div class="podium">${podium.map((p, i) => `<div class="pod p${i + 1}"><span class="em">${esc(p.emoji)}</span><b>${esc(p.name)}</b><span>${p.score}</span><div class="step">${['🥇', '🥈', '🥉'][i]}</div></div>`).join('')}</div>
+  <header class="hero"><h1>${game.winnerIds.map((id) => esc(byId[id]?.name)).join(' & ')} win${game.winnerIds.length > 1 ? '' : 's'}!</h1>
+  <p class="muted">${dot(modeColor(game))}${esc(game.modeName)} · ${game.log.length} cards · ${Math.round((game.endedAt - game.startedAt) / 60000)} min</p></header>
+  <div class="podium">${podium.map((p, i) => `<div class="pod p${i + 1}">${avatar(p)}<b>${esc(p.name)}</b><span>${p.score}</span><div class="step">${i + 1}</div></div>`).join('')}</div>
   <section class="panel">
-    <table class="tbl"><tr><th></th><th>Pts</th><th>✅</th><th>🙅</th><th>🦾</th></tr>
+    <table class="tbl"><tr><th></th><th>Points</th><th>Done</th><th>Vetoes</th><th>Penances</th></tr>
     ${rows.map((p) => `<tr><td>${pname(p)}</td><td><b>${p.score}</b></td><td>${p.done}</td><td>${p.rejected}</td><td>${p.penances}</td></tr>`).join('')}</table>
   </section>
-  ${awards.length ? `<section class="panel"><h2>Awards</h2><ul class="awards">${awards.map((a) => `<li><span class="em">${a.icon}</span><div><b>${a.name}</b>: ${a.ids.map((id) => esc(byId[id]?.name)).join(', ')}<small>${a.desc} (${a.value})</small></div></li>`).join('')}</ul></section>` : ''}
+  ${awards.length ? `<section class="panel"><h2>Awards</h2><ul class="awards">${awards.map((a) => `<li><span class="award" style="--c:${AWARD_COLORS[a.key]}">${a.name}</span><div>${a.ids.map((id) => esc(byId[id]?.name)).join(', ')}<small>${a.desc} (${a.value})</small></div></li>`).join('')}</ul></section>` : ''}
   <div class="row center">
     <button class="btn primary big" data-act="summary-close">New game</button>
     <button class="btn" data-act="open-game" data-id="${game.id}">Game log</button>
@@ -538,9 +571,9 @@ function cardListHTML() {
       <div class="badges">${badges(c)}${p ? `<span class="badge">${esc(p.name)}</span>` : ''}</div>
       <div class="tags">${tagLine(c)}</div>
       <div class="row">
-        <button class="btn small" data-act="toggle-card" data-id="${c.id}">${off ? '▶️ Switch on' : '⏸ Switch off'}</button>
-        ${c.custom ? `<button class="btn small" data-act="edit-card" data-id="${c.id}">✏️ Edit</button><button class="btn small bad" data-act="delete-card" data-id="${c.id}">🗑</button>`
-          : `<button class="btn small" data-act="copy-card" data-id="${c.id}">📝 Copy & edit</button>`}
+        <button class="btn small" data-act="toggle-card" data-id="${c.id}">${off ? 'Switch on' : 'Switch off'}</button>
+        ${c.custom ? `<button class="btn small" data-act="edit-card" data-id="${c.id}">Edit</button><button class="btn small bad" data-act="delete-card" data-id="${c.id}">Delete</button>`
+          : `<button class="btn small" data-act="copy-card" data-id="${c.id}">Copy & edit</button>`}
       </div>
     </article>`;
   }).join('');
@@ -554,8 +587,8 @@ function viewCards() {
   <header class="page-head"><h1>Cards</h1><button class="btn primary" data-act="new-card">＋ New card</button></header>
   <p class="muted small">${DEFAULT_CARDS.length} default · ${crew} made by your crew · ${off} switched off. Switched-off cards are never dealt.</p>
   <input class="search" type="search" placeholder="Search cards" value="${esc(f.q)}" data-act-input="card-search">
-  <div class="chips">${[['all', 'All'], ['walk', '🚶 Walking'], ['couch', '🛋️ Couch'], ['crew', '✍️ Crew'], ['default', 'Default'], ['off', '⏸ Off']].map(([v, l]) => chip(l, f.source === v, 'card-source', { v })).join('')}</div>
-  <div class="chips scroll">${chip('All tags', !f.tag, 'card-tag', { v: '' })}${chip('📍 Spots', f.tag === 'place', 'card-tag', { v: 'place' })}${Object.entries(TAGS).map(([k, t]) => chip(`${t.icon} ${t.label}`, f.tag === k, 'card-tag', { v: k })).join('')}</div>
+  <div class="chips">${[['all', 'All'], ['walk', 'Walking'], ['couch', 'Couch'], ['crew', 'Crew'], ['default', 'Default'], ['off', 'Off']].map(([v, l]) => chip(l, f.source === v, 'card-source', { v })).join('')}</div>
+  <div class="chips scroll">${chip('All tags', !f.tag, 'card-tag', { v: '' })}${chip('Spots', f.tag === 'place', 'card-tag', { v: 'place' })}${Object.entries(TAGS).map(([k, t]) => chip(`${dot(t.color)}${t.label}`, f.tag === k, 'card-tag', { v: k })).join('')}</div>
   <div id="card-list">${cardListHTML()}</div>`;
 }
 
@@ -569,17 +602,17 @@ function cardEditor(draft) {
     <label>Title<input name="title" maxlength="60" required value="${esc(draft.title)}" placeholder="e.g. Harbour Haiku"></label>
     <label>Challenge<textarea name="text" maxlength="400" rows="4" required placeholder="What do you have to do? How do you win?">${esc(draft.text)}</textarea></label>
     <fieldset><legend>Difficulty</legend><div class="seg">${[1, 2, 3, 4].map((d) => `<label><input type="radio" name="diff" value="${d}" ${draft.diff === d ? 'checked' : ''}><span>${DIFF[d].label}<small>${DIFF[d].pts}</small></span></label>`).join('')}</div></fieldset>
-    <fieldset><legend>Who does it</legend><div class="seg">${Object.entries(WHO).map(([k, w]) => `<label><input type="radio" name="who" value="${k}" ${draft.who === k ? 'checked' : ''}><span>${w.icon} ${w.label}</span></label>`).join('')}</div></fieldset>
-    <label>Deck<select name="deck"><option value="walk" ${draft.deck !== 'couch' ? 'selected' : ''}>🚶 Walking (city)</option><option value="couch" ${draft.deck === 'couch' ? 'selected' : ''}>🛋️ Couch (no walking)</option></select></label>
+    <fieldset><legend>Who does it</legend><div class="seg">${Object.entries(WHO).map(([k, w]) => `<label><input type="radio" name="who" value="${k}" ${draft.who === k ? 'checked' : ''}><span>${dot(w.color)}${w.label}</span></label>`).join('')}</div></fieldset>
+    <label>Deck<select name="deck"><option value="walk" ${draft.deck !== 'couch' ? 'selected' : ''}>Walking (city)</option><option value="couch" ${draft.deck === 'couch' ? 'selected' : ''}>Couch (no walking)</option></select></label>
     <label class="switch-row"><input type="checkbox" name="mix" ${draft.mix ? 'checked' : ''}> <span>Couch card that also works on a walk</span></label>
     <label>Roughly how many minutes<input name="mins" type="number" min="1" max="240" inputmode="numeric" value="${draft.mins}"></label>
-    <fieldset><legend>Tags</legend><div class="seg wrap">${Object.entries(TAGS).map(([k, t]) => `<label><input type="checkbox" name="tags" value="${k}" ${draft.tags.includes(k) ? 'checked' : ''}><span>${t.icon} ${t.label}</span></label>`).join('')}</div></fieldset>
-    <fieldset><legend>Only when… <small class="muted">(leave empty for any time)</small></legend><div class="seg wrap">${Object.entries(NEEDS).map(([k, n]) => `<label><input type="checkbox" name="needs" value="${k}" ${(draft.needs || []).includes(k) ? 'checked' : ''}><span>${n.icon} ${n.label}</span></label>`).join('')}</div></fieldset>
-    <label>Built-in tool<select name="tool"><option value="">None</option>${Object.entries(TOOLS).map(([k, t]) => `<option value="${k}" ${draft.tool === k ? 'selected' : ''}>${t.icon} ${t.label}</option>`).join('')}</select></label>
+    <fieldset><legend>Tags</legend><div class="seg wrap">${Object.entries(TAGS).map(([k, t]) => `<label><input type="checkbox" name="tags" value="${k}" ${draft.tags.includes(k) ? 'checked' : ''}><span>${dot(t.color)}${t.label}</span></label>`).join('')}</div></fieldset>
+    <fieldset><legend>Only when… <small class="muted">(leave empty for any time)</small></legend><div class="seg wrap">${Object.entries(NEEDS).map(([k, n]) => `<label><input type="checkbox" name="needs" value="${k}" ${(draft.needs || []).includes(k) ? 'checked' : ''}><span>${dot(n.color)}${n.label}</span></label>`).join('')}</div></fieldset>
+    <label>Built-in tool<select name="tool"><option value="">None</option>${Object.entries(TOOLS).map(([k, t]) => `<option value="${k}" ${draft.tool === k ? 'selected' : ''}>${t.label}</option>`).join('')}</select></label>
     <label>Timer seconds (if the tool is Timer)<input name="secs" type="number" min="5" max="7200" inputmode="numeric" value="${draft.secs || 60}"></label>
     <label>Location<select name="place">
       <option value="">Anywhere</option>
-      <option value="custom" ${placeVal === 'custom' ? 'selected' : ''}>📍 My current spot${cp ? ` (${esc(cp.name)})` : ''}</option>
+      <option value="custom" ${placeVal === 'custom' ? 'selected' : ''}>My current spot${cp ? ` (${esc(cp.name)})` : ''}</option>
       ${PLACES.map((p) => `<option value="${p.id}" ${placeVal === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
     </select></label>
     <label>Spot name (for "My current spot")<input name="spotName" maxlength="40" value="${esc(cp?.name || '')}" placeholder="e.g. Our favourite bench"></label>
@@ -596,10 +629,10 @@ const SORTS = {
   wins:     { label: 'Wins',      val: (r) => r.wins },
   best:     { label: 'Best game', val: (r) => r.best ?? 0 },
   avg:      { label: 'Avg/game',  val: (r) => (r.games ? Math.round(r.points / r.games) : 0) },
-  done:     { label: '✅ Done',   val: (r) => r.done },
-  places:   { label: '🧭 Spots',  val: (r) => r.places },
-  rejected: { label: '🐔 Chicken', val: (r) => r.rejected },
-  penances: { label: '🦾 Iron',   val: (r) => r.penances },
+  done:     { label: 'Done',   val: (r) => r.done },
+  places:   { label: 'Spots',  val: (r) => r.places },
+  rejected: { label: 'Chicken', val: (r) => r.rejected },
+  penances: { label: 'Iron',   val: (r) => r.penances },
 };
 
 function viewRecords() {
@@ -611,32 +644,32 @@ function viewRecords() {
     const sort = SORTS[ui.records.sort];
     const rows = leaderboard(games, store.list('players'), deletedIds()).sort((a, b) => sort.val(b) - sort.val(a));
     body = `<div class="chips scroll">${Object.entries(SORTS).map(([k, s]) => chip(s.label, ui.records.sort === k, 'rec-sort', { v: k })).join('')}</div>
-      ${rows.length ? `<ol class="board">${rows.map((r) => `<li class="${isMe(r.id) ? 'me' : ''}"><span class="em">${esc(r.emoji)}</span><div><b>${esc(r.name)}${isMe(r.id) ? ' <small class="you">you</small>' : ''}</b><small>${r.games} game${r.games === 1 ? '' : 's'} · ${r.wins} win${r.wins === 1 ? '' : 's'} · best ${r.best ?? 0}</small></div><span class="val">${sort.val(r)}</span></li>`).join('')}</ol>`
+      ${rows.length ? `<ol class="board">${rows.map((r) => `<li class="${isMe(r.id) ? 'me' : ''}">${avatar(r)}<div><b>${esc(r.name)}${isMe(r.id) ? ' <small class="you">you</small>' : ''}</b><small>${r.games} game${r.games === 1 ? '' : 's'} · ${r.wins} win${r.wins === 1 ? '' : 's'} · best ${r.best ?? 0}</small></div><span class="val">${sort.val(r)}</span></li>`).join('')}</ol>`
         : '<p class="muted center">No finished games yet. Go play!</p>'}`;
   } else if (v === 'high') {
     const top = topScores(games, 15, deletedIds());
-    body = top.length ? `<ol class="board">${top.map((r) => `<li class="${isMe(r.id) ? 'me' : ''}"><span class="em">${esc(r.emoji)}</span><div><b>${esc(r.name)}</b><small>${esc(r.modeName)} · ${r.nPlayers} players · ${fmtDate(r.endedAt)}</small></div><span class="val">${r.score}</span></li>`).join('')}</ol>`
+    body = top.length ? `<ol class="board">${top.map((r) => `<li class="${isMe(r.id) ? 'me' : ''}">${avatar(r)}<div><b>${esc(r.name)}</b><small>${esc(r.modeName)} · ${r.nPlayers} players · ${fmtDate(r.endedAt)}</small></div><span class="val">${r.score}</span></li>`).join('')}</ol>`
       : '<p class="muted center">No scores yet.</p>';
   } else if (v === 'history') {
     body = games.length ? `<ul class="history">${games.map((g) => {
       const byId = Object.fromEntries(g.players.map((p) => [p.id, p]));
-      return `<li><button data-act="open-game" data-id="${g.id}"><div><b>${g.modeIcon || ''} ${esc(g.modeName)}</b><small>${fmtDate(g.endedAt)} · ${g.players.length} players · ${g.log.length} cards</small></div><span>🏆 ${g.winnerIds.map((id) => esc(byId[id]?.emoji)).join('')}</span></button></li>`;
+      return `<li><button data-act="open-game" data-id="${g.id}"><div><b>${dot(modeColor(g))}${esc(g.modeName)}</b><small>${fmtDate(g.endedAt)} · ${g.players.length} players · ${g.log.length} cards</small></div><span class="winners">${g.winnerIds.map((id) => (byId[id] ? avatar(byId[id], 'sm') : '')).join('')}</span></button></li>`;
     }).join('')}</ul>` : '<p class="muted center">No games yet.</p>';
   } else {
     const ps = sortCrew(store.list('players'));
     const counts = gamesPerPlayer();
     const dups = duplicateGroups(ps);
-    body = `${dups.map((grp) => `<div class="banner soft">⚠️ ${grp.length} players called "${esc(grp[0].name)}". Open the one you don't want and use <b>Merge into…</b></div>`).join('')}
-      <ul class="players">${ps.map((p) => `<li class="${isMe(p.id) ? 'me' : ''}"><span class="em">${esc(p.emoji)}</span><b>${esc(p.name)}${isMe(p.id) ? ' <small class="you">you</small>' : ''}<small class="muted"> ${counts[p.id] || 0} game${counts[p.id] === 1 ? '' : 's'}</small></b><button class="btn small" data-act="edit-player" data-id="${p.id}">Edit</button></li>`).join('')}</ul>
+    body = `${dups.map((grp) => `<div class="banner soft">${grp.length} players called "${esc(grp[0].name)}". Open the one you don't want and use <b>Merge into…</b></div>`).join('')}
+      <ul class="players">${ps.map((p) => `<li class="${isMe(p.id) ? 'me' : ''}">${avatar(p)}<b>${esc(p.name)}${isMe(p.id) ? ' <small class="you">you</small>' : ''}<small class="muted"> ${counts[p.id] || 0} game${counts[p.id] === 1 ? '' : 's'}</small></b><button class="btn small" data-act="edit-player" data-id="${p.id}">Edit</button></li>`).join('')}</ul>
       <form class="inline-add" data-form="add-player"><input name="name" placeholder="New crew player" maxlength="24" autocomplete="off"><button class="btn" name="as" value="crew">＋ Crew</button></form>
       <p class="muted small">Guests (added on the Play screen) aren't listed here and don't count on the leaderboard.</p>
       ${deletedWithGames().length ? `
       <h3>Deleted players</h3>
       <p class="muted small">Hidden from the leaderboard and highscores. Their games stay in History. Restore them, or merge their points into someone who is still in the crew.</p>
       <ul class="players deleted">${deletedWithGames().map((p) => `<li>
-        <span class="em">${esc(p.emoji)}</span><b>${esc(p.name)}<small class="muted"> ${p.games} game${p.games === 1 ? '' : 's'}</small></b>
+        ${avatar(p)}<b>${esc(p.name)}<small class="muted"> ${p.games} game${p.games === 1 ? '' : 's'}</small></b>
         <div class="row">
-          <button class="btn small" data-act="restore-player" data-id="${p.id}">↩️ Restore</button>
+          <button class="btn small" data-act="restore-player" data-id="${p.id}">Restore</button>
           ${ps.length ? `<select id="merge-deleted-${p.id}">${ps.map((o) => `<option value="${o.id}">${esc(o.emoji)} ${esc(o.name)}${similarNames(o.name, p.name) ? ' (same name?)' : ''}</option>`).join('')}</select>
           <button class="btn small" data-act="merge-deleted" data-id="${p.id}">Merge</button>` : ''}
         </div>
@@ -650,14 +683,14 @@ function viewRecords() {
 function gameDetail(game) {
   const rows = [...game.players].sort((a, b) => b.score - a.score);
   const byId = Object.fromEntries(game.players.map((p) => [p.id, p]));
-  const icon = { done: '✅', fail: '😅', reject: '🙅' };
-  return `<h2>${game.modeIcon || ''} ${esc(game.modeName)}</h2>
+  const icon = { done: '', fail: '', reject: '' };
+  return `<h2>${dot(modeColor(game))}${esc(game.modeName)}</h2>
     <p class="muted small">${new Date(game.startedAt).toLocaleString()} · ${Math.round((game.endedAt - game.startedAt) / 60000)} min</p>
-    <table class="tbl">${rows.map((p) => `<tr><td>${game.winnerIds.includes(p.id) ? '🏆 ' : ''}${pname(p)}${isGuest(p) ? ' <small class="muted">guest</small>' : ''}</td><td><b>${p.score}</b></td></tr>`).join('')}</table>
+    <table class="tbl">${rows.map((p) => `<tr><td>${game.winnerIds.includes(p.id) ? '' : ''}${pname(p)}${isGuest(p) ? ' <small class="muted">guest</small>' : ''}</td><td><b>${p.score}</b></td></tr>`).join('')}</table>
     <h3>Cards</h3>
     <ol class="log">${game.log.map((e) => `<li>
       <div>${icon[e.type]} <b>${esc(e.title)}</b> <small>${esc(byId[e.pid]?.name || '')}</small></div>
-      <small>${Object.entries(e.awards || {}).map(([pid, pts]) => `${esc(byId[pid]?.name || '?')} ${pts > 0 ? '+' : ''}${pts}`).join(', ') || '0 points'}${e.free ? ' · free veto' : ''}${e.penance ? ` · penance: ${esc(e.penance.text)}` : ''}${e.bonus ? ' · 🔥' : ''}${e.checkin ? ' · 📍 checked in' : ''}</small>
+      <small>${Object.entries(e.awards || {}).map(([pid, pts]) => `${esc(byId[pid]?.name || '?')} ${pts > 0 ? '+' : ''}${pts}`).join(', ') || '0 points'}${e.free ? ' · free veto' : ''}${e.penance ? ` · penance: ${esc(e.penance.text)}` : ''}${e.bonus ? ' · ' : ''}${e.checkin ? ' · checked in' : ''}</small>
       ${e.photo ? `<div class="log-photo" data-photo-key="${esc(e.photo)}"></div>` : ''}
     </li>`).join('')}</ol>
     <div class="row"><button class="btn" data-act="close-sheet">Close</button><button class="btn bad small" data-act="delete-game" data-id="${game.id}">Delete game</button></div>`;
@@ -667,7 +700,7 @@ function gameDetail(game) {
 function viewTools() {
   const t = ui.freeTool;
   return `<header class="page-head"><h1>Tools</h1></header>
-    <div class="tool-grid">${Object.entries(TOOLS).map(([k, x]) => `<button class="${t === k ? 'on' : ''}" data-act="free-tool" data-v="${k}"><span>${x.icon}</span>${x.label}</button>`).join('')}</div>
+    <div class="tool-grid">${Object.entries(TOOLS).map(([k, x]) => `<button class="${t === k ? 'on' : ''}" data-act="free-tool" data-v="${k}">${x.label}</button>`).join('')}</div>
     ${renderTool(t, toolState('free', t), { scope: 'free', players: store.game?.players || [] })}`;
 }
 
@@ -678,7 +711,7 @@ function viewSettings() {
   return `<header class="page-head"><h1>Settings</h1></header>
   ${crewsPanel()}
   <section class="panel">
-    <h2>⭐ You in ${esc(store.crew().name)}</h2>
+    <h2>You in ${esc(store.crew().name)}</h2>
     ${crew.length ? `<select class="search" data-act-change="set-me-select">
       <option value="">Not set</option>
       ${crew.map((p) => `<option value="${p.id}" ${isMe(p.id) ? 'selected' : ''}>${esc(p.emoji)} ${esc(p.name)}</option>`).join('')}
@@ -691,13 +724,13 @@ function viewSettings() {
     <label class="range-row">Range for location cards <b>${s.range} m</b>
       <input type="range" min="500" max="1000" step="50" value="${s.range}" data-act-change="range"></label>
     <p class="muted small">${geoLine()}</p>
-    <button class="btn" data-act="geo-start">📍 Test GPS</button>
+    <button class="btn" data-act="geo-start">Test GPS</button>
   </section>
   <section class="panel">
     <h2>Backup</h2>
     <p class="muted small">Save players, crew cards and game history to a file, or load one. Loading merges: nothing is overwritten with older data.</p>
-    <div class="row"><button class="btn" data-act="export">⬇️ Export</button>
-    <label class="btn file-btn">⬆️ Import<input type="file" accept="application/json,.json" data-act-change="import" hidden></label></div>
+    <div class="row"><button class="btn" data-act="export">Export</button>
+    <label class="btn file-btn">Import<input type="file" accept="application/json,.json" data-act-change="import" hidden></label></div>
   </section>
   <section class="panel">
     <h2>Install</h2>
@@ -706,7 +739,7 @@ function viewSettings() {
   <section class="panel">
     <h2>App version</h2>
     <p>This phone runs <b>${VERSION}</b>${ui.update.latest && ui.update.latest !== VERSION ? `, and <b>${esc(ui.update.latest)}</b> is available` : ui.update.checkedAt ? ', the latest' : ''}.</p>
-    <button class="btn" data-act="check-update">🔄 Check for updates</button>
+    <button class="btn" data-act="check-update">Check for updates</button>
     <p class="muted small">The app checks by itself every time it's opened, and updates straight away unless a game is running.</p>
   </section>
   ${rulesBlock()}
@@ -718,27 +751,27 @@ function viewSettings() {
 }
 
 function crewStatus(c) {
-  if (c.local) return '📱 Only on this phone';
-  if (c.deleted) return '🗑 Deleted by the owner. Its records only remain on this phone';
-  if (!canSync(c)) return '⚠️ Not signed in. Join again with an invite';
-  const role = c.token ? 'Member' : '👑 Owner';
-  if (c.syncError) return `${role} · ⚠️ ${esc(c.syncError)}`;
+  if (c.local) return 'Only on this phone';
+  if (c.deleted) return 'Deleted by the owner. Its records only remain on this phone';
+  if (!canSync(c)) return 'Not signed in. Join again with an invite';
+  const role = c.token ? 'Member' : 'Owner';
+  if (c.syncError) return `${role} · ${esc(c.syncError)}`;
   return `${role} · ${c.lastSync ? `synced ${new Date(c.lastSync).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}` : 'not synced yet'}`;
 }
 
 function crewsPanel() {
   const s = store.settings, active = store.crew();
   return `<section class="panel crews-panel">
-    <h2>👥 Crews</h2>
+    <h2>Crews</h2>
     <p class="muted small">Each crew has its own players, cards, records and live games. You can be in several and switch between them.</p>
     <ul class="crew-list">${store.crews().map((c) => `
       <li class="${c.id === active.id ? 'on' : ''}">
-        <div class="crew-name"><b>${c.local ? '📱' : '☁️'} ${esc(c.name)}</b><small>${crewStatus(c)}</small></div>
+        <div class="crew-name"><b>${c.local ? '' : ''} ${esc(c.name)}</b><small>${crewStatus(c)}</small></div>
         <div class="row">
           ${c.id === active.id ? '<span class="badge ok">Playing</span>' : `<button class="btn small" data-act="switch-crew" data-id="${c.id}">Switch</button>`}
-          ${!c.local && !c.deleted && (c.invite || (c.admin && isAdmin())) ? `<button class="btn small" data-act="invite-crew" data-id="${c.id}">✉️ Invite</button>` : ''}
+          ${!c.local && !c.deleted && (c.invite || (c.admin && isAdmin())) ? `<button class="btn small" data-act="invite-crew" data-id="${c.id}">Invite</button>` : ''}
           ${!c.local && (c.id !== active.id || c.deleted) ? `<button class="btn small bad" data-act="leave-crew" data-id="${c.id}">Leave</button>` : ''}
-          ${c.admin && isAdmin() && c.id !== MAIN && !c.local && !c.deleted ? `<button class="btn small bad" data-act="delete-crew" data-id="${c.id}" data-name="${esc(c.name)}">🗑 Delete</button>` : ''}
+          ${c.admin && isAdmin() && c.id !== MAIN && !c.local && !c.deleted ? `<button class="btn small bad" data-act="delete-crew" data-id="${c.id}" data-name="${esc(c.name)}">Delete</button>` : ''}
         </div>
       </li>`).join('')}
     </ul>
@@ -749,7 +782,7 @@ function crewsPanel() {
       <button class="btn primary">Join</button>
     </form>
     ${isAdmin() ? `
-    <h3>👑 Create a crew</h3>
+    <h3>Create a crew</h3>
     <form class="inline-add" data-form="create-crew">
       <input name="name" placeholder="e.g. Nørrebro gang" maxlength="40" autocomplete="off">
       <button class="btn">Create</button>
@@ -772,20 +805,20 @@ function sheetInvite(id) {
   const c = store.crews().find((x) => x.id === id);
   if (!c) return '<p>Crew not found.</p>';
   const appUrl = location.origin + location.pathname;
-  return `<h2>✉️ Invite to ${esc(c.name)}</h2>
+  return `<h2>Invite to ${esc(c.name)}</h2>
     ${c.invite ? `
       <p class="center small">Friends open the deck, go to <b>Settings → Crews → Join a crew</b> and paste:</p>
       <div class="invite-code" data-copy="${esc(c.invite)}">${esc(c.invite)}</div>
       <div class="row center">
-        <button class="btn primary" data-act="share-invite" data-id="${c.id}">📤 Share</button>
-        <button class="btn" data-act="copy-invite" data-id="${c.id}">📋 Copy</button>
+        <button class="btn primary" data-act="share-invite" data-id="${c.id}">Share</button>
+        <button class="btn" data-act="copy-invite" data-id="${c.id}">Copy</button>
       </div>
       <p class="muted small center">App: ${esc(appUrl)}</p>`
     : '<p class="muted">There is no invite code on this phone for this crew yet.</p>'}
     ${c.admin && isAdmin() ? `
       <h3>New invite code</h3>
       <p class="muted small">${c.invite ? 'If the code got into the wrong hands: make a new one. The old code stops working, but everyone already in the crew stays in.' : 'Make the first invite code for this crew.'}</p>
-      <button class="btn ${c.invite ? 'bad small' : 'primary'}" data-act="new-invite" data-id="${c.id}">${c.invite ? '♻️ Replace invite code' : '✨ Make an invite code'}</button>`
+      <button class="btn ${c.invite ? 'bad small' : 'primary'}" data-act="new-invite" data-id="${c.id}">${c.invite ? 'Replace invite code' : 'Make an invite code'}</button>`
     : c.invite ? '<p class="muted small">This is the code you joined with. If the owner has replaced it since, ask them for the new one.</p>' : ''}
     <div class="col"><button class="btn" data-act="close-sheet">Close</button></div>`;
 }
@@ -793,10 +826,10 @@ function sheetInvite(id) {
 function sheetServerCrews(list) {
   if (!list) return '<h2>Crews on the server</h2><p class="muted">Loading…</p>';
   const here = new Set(store.crews().map((c) => c.id));
-  return `<h2>👑 Crews on the server</h2>
-    <ul class="crew-list">${list.map((c) => `<li><div class="crew-name"><b>☁️ ${esc(c.name)}</b><small>${c.members} member pass${c.members === 1 ? '' : 'es'}${c.id === MAIN ? ' · the original crew' : ''}</small></div>
+  return `<h2>Crews on the server</h2>
+    <ul class="crew-list">${list.map((c) => `<li><div class="crew-name"><b>${esc(c.name)}</b><small>${c.members} member pass${c.members === 1 ? '' : 'es'}${c.id === MAIN ? ' · the original crew' : ''}</small></div>
       <div class="row">${here.has(c.id) ? '<span class="badge">On this phone</span>' : `<button class="btn small" data-act="add-server-crew" data-id="${c.id}" data-name="${esc(c.name)}">Add to this phone</button>`}
-        ${c.id !== MAIN ? `<button class="btn small bad" data-act="delete-crew" data-id="${c.id}" data-name="${esc(c.name)}">🗑 Delete</button>` : ''}</div></li>`).join('')}</ul>
+        ${c.id !== MAIN ? `<button class="btn small bad" data-act="delete-crew" data-id="${c.id}" data-name="${esc(c.name)}">Delete</button>` : ''}</div></li>`).join('')}</ul>
     <p class="muted small">The Main crew can't be deleted: it holds the original records.</p>
     <div class="col"><button class="btn" data-act="close-sheet">Close</button></div>`;
 }
@@ -815,7 +848,7 @@ function renderSheet() {
   if (s.type === 'live') body = sheetLive();
   if (s.type === 'invite') body = sheetInvite(s.id);
   if (s.type === 'server-crews') body = sheetServerCrews(s.list);
-  if (s.type === 'tools') body = `<h2>Tools</h2><div class="tool-grid">${Object.entries(TOOLS).map(([k, x]) => `<button class="${ui.freeTool === k ? 'on' : ''}" data-act="free-tool" data-v="${k}"><span>${x.icon}</span>${x.label}</button>`).join('')}</div>
+  if (s.type === 'tools') body = `<h2>Tools</h2><div class="tool-grid">${Object.entries(TOOLS).map(([k, x]) => `<button class="${ui.freeTool === k ? 'on' : ''}" data-act="free-tool" data-v="${k}">${x.label}</button>`).join('')}</div>
     ${renderTool(ui.freeTool, toolState('free', ui.freeTool), { scope: 'free', players: store.game?.players || [] })}<div class="row"><button class="btn" data-act="close-sheet">Close</button></div>`;
   el.className = 'open';
   el.innerHTML = `<div class="backdrop" data-act="close-sheet"></div><div class="sheet" role="dialog">${body}</div>`;
@@ -837,7 +870,7 @@ function sheetReject() {
   const after = pen ? costAfterPenance(rc.cost, pen.level) : null;
   return `<h2>Reject "${esc(card.title)}"?</h2>
     <p>No free vetoes left. Rejecting costs ${pname(p)} <b>−${rc.cost}</b> points${st.paidRejects ? ` (half the card's value, +${st.paidRejects * 5} for earlier rejections)` : " (half the card's value)"}.</p>
-    ${pen ? `<div class="penance"><p class="pen-head">💪 Penance offered: ${pen.level === 2 ? 'HEAVY' : 'light'}</p><p class="pen-text">${esc(pen.text)}</p>
+    ${pen ? `<div class="penance"><p class="pen-head">Penance offered: ${pen.level === 2 ? 'HEAVY' : 'light'}</p><p class="pen-text">${esc(pen.text)}</p>
       <p class="small">Do it now and lose only <b>−${after}</b> (${pen.level === 2 ? 'a quarter' : 'half'} of the cost).</p>
       <button class="btn ok big" data-act="reject" data-how="penance">Penance done: −${after}</button></div>`
     : `<p class="muted small">No penance on offer this time (${Math.round((g.rules.penanceChance || 0) * 100)}% chance in this mode).</p>`}
@@ -848,12 +881,12 @@ function sheetMenu() {
   const g = store.game;
   return `<h2>Game menu</h2>
     <div class="col">
-      <button class="btn" data-act="undo" ${g.log.length || g.current ? '' : 'disabled'}>↩️ Undo last action</button>
-      <button class="btn primary" data-act="end-game">🏁 End game & save</button>
+      <button class="btn" data-act="undo" ${g.log.length || g.current ? '' : 'disabled'}>Undo last action</button>
+      <button class="btn primary" data-act="end-game">End game & save</button>
       <div class="row"><button class="btn" data-act="add-to-game" data-as="crew">＋ Crew player</button><button class="btn" data-act="add-to-game" data-as="guest">＋ Guest</button></div>
-      ${g.live ? '<button class="btn" data-act="live-info">📡 Show join code</button><button class="btn" data-act="leave-live">🚪 Stop following on this phone</button>'
-        : syncConfigured() ? '<button class="btn" data-act="go-live">📡 Share this game live</button>' : ''}
-      <button class="btn bad" data-act="abandon-game">🗑 Abandon without saving${g.live ? ' (for everyone)' : ''}</button>
+      ${g.live ? '<button class="btn" data-act="live-info">Show join code</button><button class="btn" data-act="leave-live">Stop following on this phone</button>'
+        : syncConfigured() ? '<button class="btn" data-act="go-live">Share this game live</button>' : ''}
+      <button class="btn bad" data-act="abandon-game">Abandon without saving${g.live ? ' (for everyone)' : ''}</button>
       <button class="btn" data-act="close-sheet">Close</button>
     </div>
     <p class="muted small">Penance chance: ${Math.round((g.rules.penanceChance || 0) * 100)}% · Free vetoes: ${g.rules.freeVetoes || 0} each · Points ×${g.rules.mult || 1}${g.live ? ` · Confirming: ${esc(CONFIRM[g.rules.confirm || 'off'].label)}` : ''}</p>`;
@@ -862,10 +895,10 @@ function sheetMenu() {
 function sheetLive() {
   const g = store.game;
   if (!g?.live) return '<p>This game is not live.</p><div class="row"><button class="btn" data-act="close-sheet">Close</button></div>';
-  return `<h2>📡 Live game</h2>
+  return `<h2>Live game</h2>
     <div class="join-code">${esc(g.live.code)}</div>
     <p class="center">Friends open the deck → <b>Play</b> → <b>Join a live game</b> → enter this code.</p>
-    <p class="muted small center">${ui.liveOk ? '✓ Connected. Every phone sees the same card and scores, and anyone can draw and score.' : '⚠️ No connection right now. Moves made here will fail until it comes back.'}</p>
+    <p class="muted small center">${ui.liveOk ? '✓ Connected. Every phone sees the same card and scores, and anyone can draw and score.' : 'No connection right now. Moves made here will fail until it comes back.'}</p>
     <div class="col"><button class="btn" data-act="close-sheet">Close</button></div>`;
 }
 
@@ -899,11 +932,11 @@ function sheetPlayer(p) {
   others.sort((a, b) => similarNames(b.name, p.name) - similarNames(a.name, p.name));
   return `<h2>${esc(p.emoji)} ${esc(p.name)}</h2>
     <p class="muted small">${nGames} game${nGames === 1 ? '' : 's'} in the records</p>
-    ${isMe(p.id) ? '<p class="badge ok">⭐ This is you on this phone</p>' : `<button class="btn" data-act="set-me" data-id="${p.id}">⭐ This is me (on this phone)</button>`}
+    ${isMe(p.id) ? '<p class="badge ok">This is you on this phone</p>' : `<button class="btn" data-act="set-me" data-id="${p.id}">This is me (on this phone)</button>`}
     <form data-form="player" class="editor" style="margin-top:12px">
       <input type="hidden" name="id" value="${p.id}">
       <label>Name<input name="name" maxlength="24" required value="${esc(p.name)}"></label>
-      <fieldset><legend>Emoji</legend><div class="seg wrap emoji-pick">${EMOJIS.map((e) => `<label><input type="radio" name="emoji" value="${e}" ${p.emoji === e ? 'checked' : ''}><span>${e}</span></label>`).join('')}</div></fieldset>
+      <fieldset><legend>Color</legend><div class="swatches">${PLAYER_COLORS.map((c) => `<label><input type="radio" name="color" value="${c}" ${colorFor(p) === c ? 'checked' : ''}><span style="--c:${c}">${esc(initials(p.name))}</span></label>`).join('')}</div></fieldset>
       <div class="row"><button class="btn primary">Save</button><button class="btn" type="button" data-act="close-sheet">Cancel</button></div>
     </form>
     ${others.length ? `
@@ -935,6 +968,12 @@ function toast(msg) {
 const saveGame = () => store.saveGame();
 const closeSheet = () => { ui.sheet = null; renderSheet(); };
 
+/** A player color nobody in the crew (or this game) uses yet, if there is one. */
+function freeColor() {
+  const used = new Set([...store.list('players').map(colorFor), ...ui.setup.guests.map(colorFor), ...(store.game?.players || []).map(colorFor)]);
+  return PLAYER_COLORS.find((c) => !used.has(c)) || PLAYER_COLORS[Math.floor(Math.random() * PLAYER_COLORS.length)];
+}
+
 function freeEmoji(taken = []) {
   const used = new Set([...store.list('players').map((p) => p.emoji), ...taken]);
   return EMOJIS.find((e) => !used.has(e)) || EMOJIS[Math.floor(Math.random() * EMOJIS.length)];
@@ -956,13 +995,13 @@ async function addCrewPlayer(name) {
   if (exact) { toast(`${exact.emoji} ${exact.name} already exists, so I picked them`); return exact; }
   const near = crew.find((p) => similarNames(p.name, name));
   if (near && confirm(`Did you mean ${near.emoji} ${near.name}?\n\nOK = use ${near.name}\nCancel = create a new player "${name}"`)) return near;
-  return store.put('players', { id: uid('p_'), name, emoji: freeEmoji() });
+  return store.put('players', { id: uid('p_'), name, emoji: freeEmoji(), color: freeColor() });
 }
 
 function makeGuest(name, takenEmojis = []) {
   name = name.trim().replace(/\s+/g, ' ').slice(0, 24);
   if (!name) return null;
-  return { id: uid('guest_'), name, emoji: freeEmoji(takenEmojis), guest: true };
+  return { id: uid('guest_'), name, emoji: freeEmoji(takenEmojis), color: freeColor(), guest: true };
 }
 
 /** Rewrite every finished game so `fromId` becomes `toId`, then remove `fromId`. Syncs to all phones. */
@@ -1011,9 +1050,9 @@ async function mutate(fn) {
     setLiveOk(true);
     return true;
   } catch (e) {
-    if (e.status === 409 && e.body?.state) { applyRemote(e.body, { quiet: true }); toast('🔄 Someone else was quicker. Updated'); }
+    if (e.status === 409 && e.body?.state) { applyRemote(e.body, { quiet: true }); toast('Someone else was quicker. Updated'); }
     else if (e.status === 404) { dropGame('This live game no longer exists'); }
-    else { setLiveOk(false); toast(`⚠️ ${e.message}. Try again`); }
+    else { setLiveOk(false); toast(`${e.message}. Try again`); }
     return false;
   } finally {
     busy = false;
@@ -1023,7 +1062,7 @@ async function mutate(fn) {
 
 async function addToGame(p) {
   if (store.game.players.some((x) => x.id === p.id)) { toast(`${p.name} is already playing`); return; }
-  const entry = { id: p.id, name: p.name, emoji: p.emoji, ...(p.guest ? { guest: true } : {}) };
+  const entry = snap(p);
   const ok = await mutate((g) => { if (g.players.some((x) => x.id === p.id)) return false; g.players.push(entry); });
   ui.sheet = null;
   if (ok) toast(`${p.emoji} ${p.name} joined${p.guest ? ' as a guest' : ''}`);
@@ -1062,7 +1101,7 @@ async function startGame() {
     Object.assign(g, { lobby: true, host: mine, phones: mine ? [mine] : [] });
     saveGame();
     const code = await goLive();
-    if (code) toast(`📡 Lobby open: ${code}`);
+    if (code) toast(`Lobby open: ${code}`);
     else { g.lobby = false; saveGame(); toast(`${g.players[g.turn].name} starts!`); }
   } else {
     saveGame();
@@ -1082,7 +1121,7 @@ async function goLive() {
     setLiveOk(true);
     return r.code;
   } catch (e) {
-    toast(`⚠️ Could not go live (${e.message}). Playing on this phone only`);
+    toast(`Could not go live (${e.message}). Playing on this phone only`);
     return null;
   }
 }
@@ -1100,22 +1139,22 @@ async function joinLive(raw) {
     ui.joinCode = ''; ui.summaryId = null; ui.tab = 'play';
     setLiveOk(true);
     if (store.game.useLocation) startGeo();
-    toast(`📡 Joined ${code}`);
+    toast(`Joined ${code}`);
     render();
     // In the lobby, a phone that knows who it is adds itself straight away.
     const m = me();
     if (m && store.game.lobby) await lobbyAddMe(m);
     else if (m && store.game.players.some((p) => p.id === m.id) && !(store.game.phones || []).includes(m.id)) await lobbyAddMe(m);
   } catch (e) {
-    toast(`⚠️ ${e.message}`);
+    toast(`${e.message}`);
   }
 }
 
 function describeEntry(e, g) {
   const name = g.players.find((p) => p.id === e.pid)?.name || '?';
-  if (e.type === 'done') return `✅ ${e.title}: ${Object.entries(e.awards).map(([id, pts]) => `${g.players.find((p) => p.id === id)?.name} +${pts}`).join(', ')}`;
-  if (e.type === 'reject') return `🙅 ${name} rejected ${e.title}${e.cost ? ` (−${e.cost})` : ''}`;
-  return `😅 ${name} gave ${e.title} a go`;
+  if (e.type === 'done') return `${e.title}: ${Object.entries(e.awards).map(([id, pts]) => `${g.players.find((p) => p.id === id)?.name} +${pts}`).join(', ')}`;
+  if (e.type === 'reject') return `${name} rejected ${e.title}${e.cost ? ` (−${e.cost})` : ''}`;
+  return `${name} gave ${e.title} a go`;
 }
 
 /** Another phone changed the live game: take over its state. */
@@ -1133,15 +1172,15 @@ function applyRemote({ version, state }, { quiet = false } = {}) {
     const hasVote = mine ? claimVoters(g).includes(mine) && claim.by !== mine : claimVoters(g).length > 0;
     if (hasVote) {
       const who = g.players.find((p) => p.id === claim.by)?.name || 'Someone';
-      toast(`🗳 ${who} says ${claim.type === 'done' ? 'Done' : 'Failed'}. Confirm?`);
+      toast(`${who} says ${claim.type === 'done' ? 'Done' : 'Failed'}. Confirm?`);
       try { navigator.vibrate?.([80, 40, 80]); } catch {}
     }
   }
-  if (!quiet && prev.lobby && !g.lobby) toast(`▶️ The game has started! ${g.players[g.turn]?.name} goes first`);
-  else if (!quiet && g.lobby && g.players.length > prev.players.length) toast(`👋 ${g.players[g.players.length - 1].name} joined`);
+  if (!quiet && prev.lobby && !g.lobby) toast(`The game has started! ${g.players[g.turn]?.name} goes first`);
+  else if (!quiet && g.lobby && g.players.length > prev.players.length) toast(`${g.players[g.players.length - 1].name} joined`);
   const myTurnNow = !g.lobby && isMe(g.players[g.turn]?.id) && (prev.lobby || !isMe(prev.players[prev.turn]?.id));
   if (myTurnNow) {
-    setTimeout(() => toast('🎯 Your turn!'), quiet ? 0 : 1800);
+    setTimeout(() => toast('Your turn!'), quiet ? 0 : 1800);
     try { navigator.vibrate?.([120, 60, 120]); } catch {}
   }
   store.game = g;
@@ -1154,7 +1193,7 @@ function finishFromRemote(record) {
   store.merge({ games: [record] });
   store.game = null; saveGame();
   ui.sheet = null; ui.summaryId = record.id; ui.tab = 'play';
-  toast('🏁 Game over!');
+  toast('Game over!');
   render();
 }
 
@@ -1201,16 +1240,16 @@ function applyResolution(g, type, how) {
     const pts = completionPoints(card, g.rules, { bonus: cur.bonus, checkin: cur.checkin });
     for (const id of ids) entry.awards[id] = pts;
     Object.assign(entry, { bonus: cur.bonus, checkin: cur.checkin });
-    msg = `✅ +${pts} for ${ids.map((id) => g.players.find((x) => x.id === id)?.name).join(' & ')}`;
+    msg = `+${pts} for ${ids.map((id) => g.players.find((x) => x.id === id)?.name).join(' & ')}`;
   } else if (type === 'reject') {
     const rc = rejectCost(card, g.rules, playerStats(g)[p.id]);
     let cost = rc.cost;
     if (how === 'penance' && cur.penance && !rc.free) { cost = costAfterPenance(cost, cur.penance.level); entry.penance = cur.penance; }
     Object.assign(entry, { free: rc.free, cost });
     if (cost) entry.awards[p.id] = -cost;
-    msg = rc.free ? '🙅 Free veto used' : `🙅 −${cost} for ${p.name}`;
+    msg = rc.free ? 'Free veto used' : `−${cost} for ${p.name}`;
   } else {
-    msg = '😅 Good try. No points, no penalty';
+    msg = 'Good try. No points, no penalty';
   }
   if (cur.claim) entry.confirmedBy = Object.keys(cur.claim.votes || {}).filter((id) => cur.claim.votes[id] === 'yes');
   if (card.players) entry.onScreen = card.players; // CoD: who played, so sitting out rotates fairly
@@ -1255,7 +1294,7 @@ function viewLobby(g) {
   const onPhone = new Set(g.phones || []);
   return `
   <div class="game-top">
-    <span>${g.modeIcon} <b>${esc(g.modeName)}</b> · Lobby</span>
+    <span>${dot(modeColor(g))}<b>${esc(g.modeName)}</b> · Lobby</span>
     <span><button class="icon-btn" data-act="game-menu" aria-label="Game menu">⋯</button></span>
   </div>
   <section class="panel lobby">
@@ -1263,26 +1302,26 @@ function viewLobby(g) {
     <div class="join-code">${esc(g.live?.code || '····')}</div>
     <h2>Players (${g.players.length})</h2>
     <ul class="players lobby-list">${g.players.map((p) => `<li class="${isMe(p.id) ? 'me' : ''}">
-      <span class="em">${esc(p.emoji)}</span>
-      <b>${esc(p.name)}${isMe(p.id) ? ' <small class="you">you</small>' : ''}<small class="muted"> ${isGuest(p) ? 'guest' : onPhone.has(p.id) ? '📱 joined' : 'added'}${p.id === g.host ? ' · 👑 host' : ''}</small></b>
+      ${avatar(p)}
+      <b>${esc(p.name)}${isMe(p.id) ? ' <small class="you">you</small>' : ''}<small class="muted"> ${isGuest(p) ? 'guest' : onPhone.has(p.id) ? 'joined' : 'added'}${p.id === g.host ? ' · host' : ''}</small></b>
       ${isHost && p.id !== mine ? `<button class="btn small bad" data-act="lobby-remove" data-id="${p.id}" aria-label="Remove">✕</button>` : ''}
     </li>`).join('')}</ul>
     ${!mine ? `
-      <h3>👋 Which one are you?</h3>
+      <h3>Which one are you?</h3>
       <div class="chips">${crewNotIn.map((p) => chip(pname(p), false, 'lobby-iam', { id: p.id })).join('')}
         ${g.players.filter((p) => !isGuest(p) && !onPhone.has(p.id)).map((p) => chip(pname(p) + ' <small>(listed)</small>', false, 'lobby-iam', { id: p.id })).join('')}</div>
       <form class="inline-add" data-form="lobby-new-me"><input name="name" placeholder="New: your name" maxlength="24" autocomplete="off"><button class="btn">Join</button></form>` : ''}
     ${isHost ? `<div class="row"><button class="btn small" data-act="add-to-game" data-as="crew">＋ Crew player</button><button class="btn small" data-act="add-to-game" data-as="guest">＋ Guest</button></div>` : ''}
   </section>
   ${isHost
-    ? `<div class="start-bar"><button class="btn primary big" data-act="lobby-start" ${g.players.length ? '' : 'disabled'}>▶️ Start with ${g.players.length} player${g.players.length === 1 ? '' : 's'}</button></div>`
-    : `<p class="center muted">⏳ Waiting for ${hostP ? pname(hostP) : 'the host'} to start…</p>`}`;
+    ? `<div class="start-bar"><button class="btn primary big" data-act="lobby-start" ${g.players.length ? '' : 'disabled'}>Start with ${g.players.length} player${g.players.length === 1 ? '' : 's'}</button></div>`
+    : `<p class="center muted">Waiting for ${hostP ? pname(hostP) : 'the host'} to start…</p>`}`;
 }
 
 /** Put this phone's player into the live game and mark them as joined on a phone. */
 async function lobbyAddMe(p) {
   await mutate((g) => {
-    if (!g.players.some((x) => x.id === p.id)) g.players.push({ id: p.id, name: p.name, emoji: p.emoji });
+    if (!g.players.some((x) => x.id === p.id)) g.players.push(snap(p));
     g.phones = [...new Set([...(g.phones || []), p.id])];
   });
   render();
@@ -1304,7 +1343,7 @@ async function makeClaim(type) {
       if (!msg) return false;
     }
   });
-  if (ok) toast(msg || '🗳 Sent. Waiting for the others to confirm');
+  if (ok) toast(msg || 'Sent. Waiting for the others to confirm');
   render();
 }
 
@@ -1319,12 +1358,12 @@ async function vote(pid, value) {
     if (outcome === 'accepted') {
       const r = applyResolution(g, cur.claim.type);
       if (!r) return false;
-      msg = `✔️ Confirmed. ${r}`;
+      msg = `Confirmed. ${r}`;
     } else if (outcome === 'disputed') {
       delete cur.claim;
-      msg = '❌ Not confirmed. Sort it out, then claim again or veto';
+      msg = 'Not confirmed. Sort it out, then claim again or veto';
     } else {
-      msg = value === 'yes' ? '✅ Vote counted' : '❌ Vote counted';
+      msg = value === 'yes' ? 'Vote counted' : 'Vote counted';
     }
   });
   if (ok) toast(msg);
@@ -1345,7 +1384,7 @@ async function undo() {
     }
   });
   ui.sheet = null;
-  if (ok) toast('↩️ Undone');
+  if (ok) toast('Undone');
   render();
 }
 
@@ -1381,7 +1420,7 @@ async function saveCardForm(form) {
     const prev = ui.sheet.draft.place;
     if (ui.here) place = { name: (fd.get('spotName') || 'Custom spot').trim().slice(0, 40), lat: +ui.here.lat.toFixed(5), lng: +ui.here.lng.toFixed(5) };
     else if (prev && typeof prev === 'object') place = { ...prev, name: (fd.get('spotName') || prev.name).trim().slice(0, 40) };
-    else { startGeo(); toast('📍 Waiting for GPS. Try saving again in a moment'); return; }
+    else { startGeo(); toast('Waiting for GPS. Try saving again in a moment'); return; }
   }
   const tool = fd.get('tool') || null;
   const card = normalizeCard({
@@ -1394,7 +1433,7 @@ async function saveCardForm(form) {
   store.put('cards', card);
   ui.sheet = null;
   ui.cards.source = 'crew';
-  toast('💾 Card saved');
+  toast('Card saved');
   render();
 }
 
@@ -1419,7 +1458,7 @@ function startGeo() {
   }, (err) => {
     ui.geo = err.code === 1 ? 'denied' : 'off';
     navigator.geolocation.clearWatch(geoWatch); geoWatch = null;
-    if (err.code !== 1) toast('📍 Could not get your location');
+    if (err.code !== 1) toast('Could not get your location');
     renderView();
   }, { enableHighAccuracy: true, maximumAge: 10000, timeout: 30000 });
   renderView();
@@ -1489,7 +1528,7 @@ const actions = {
       reshuffled = res.reshuffled;
     });
     if (none) toast('No cards left for this mode. End the game or change the deck');
-    if (reshuffled) toast('🔄 Deck reshuffled');
+    if (reshuffled) toast('Deck reshuffled');
     renderView();
   },
   'take-card': async ({ id }) => {
@@ -1504,9 +1543,9 @@ const actions = {
   'lobby-iam': async ({ id }) => {
     const p = store.get('players', id) || store.game.players.find((x) => x.id === id);
     if (!p) return;
-    if (!store.get('players', id)) store.put('players', { id: p.id, name: p.name, emoji: p.emoji });
+    if (!store.get('players', id)) store.put('players', snap(p));
     store.crew().meId = id; store.saveSettings();
-    toast(`⭐ Hi ${p.name}!`);
+    toast(`Hi ${p.name}!`);
     await lobbyAddMe(p);
   },
   'lobby-remove': async ({ id }) => {
@@ -1522,7 +1561,7 @@ const actions = {
       g.turn = Math.floor(Math.random() * g.players.length);
       first = g.players[g.turn].name;
     });
-    if (ok) toast(`▶️ Go! ${first} starts`);
+    if (ok) toast(`Go! ${first} starts`);
     render();
   },
   'pick-partner': async ({ id }) => {
@@ -1535,11 +1574,11 @@ const actions = {
   },
   'checkin': async () => {
     const card = cardById(store.game.current.cardId), p = resolvePlace(card);
-    if (!ui.here || !p) return toast('📍 No GPS fix yet');
+    if (!ui.here || !p) return toast('No GPS fix yet');
     const d = distanceM(ui.here, p);
     if (d > CHECKIN_RADIUS) return toast(`Still ${fmtDistance(d)} away. Get within ${CHECKIN_RADIUS} m`);
     const ok = await mutate((g) => { if (g.current?.cardId !== card.id) return false; g.current.checkin = true; });
-    if (ok) toast(`📍 Checked in! +${CHECKIN_BONUS}`);
+    if (ok) toast(`Checked in! +${CHECKIN_BONUS}`);
     renderView();
   },
   'resolve-done': () => {
@@ -1547,7 +1586,7 @@ const actions = {
     const missing = card && ((card.who === 'versus' && !cur.winners.length) || (card.who === 'duo' && !cur.partners.length));
     if (missing) {
       // Don't silently ignore the tap: say what's needed and point at it.
-      toast(card.who === 'versus' ? '⚔️ Tap who won first' : '👥 Tap your partner first');
+      toast(card.who === 'versus' ? 'Tap who won first' : 'Tap your partner first');
       const picker = $('.picker');
       if (picker) {
         picker.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1575,7 +1614,7 @@ const actions = {
   'vote': ({ id, v }) => vote(id, v),
   'withdraw-claim': async () => {
     const ok = await mutate((g) => { if (!g.current?.claim) return false; delete g.current.claim; });
-    if (ok) toast('↩️ Claim withdrawn');
+    if (ok) toast('Claim withdrawn');
     render();
   },
   'force-claim': async () => {
@@ -1585,7 +1624,7 @@ const actions = {
       msg = applyResolution(g, g.current.claim.type);
       return msg ? undefined : false;
     });
-    if (ok) toast(`⏱ Accepted. ${msg}`);
+    if (ok) toast(`Accepted. ${msg}`);
     render();
   },
   'open-reject': () => { ui.sheet = { type: 'reject' }; renderSheet(); },
@@ -1612,7 +1651,7 @@ const actions = {
     if (!p) return;
     store.crew().meId = id; store.saveSettings();
     if (!store.game && !ui.setup.playerIds.includes(id)) ui.setup.playerIds.push(id);
-    toast(`⭐ Hi ${p.name}! This phone knows it's you`);
+    toast(`Hi ${p.name}! This phone knows it's you`);
     if (ui.sheet?.type === 'player') ui.sheet = null;
     render();
   },
@@ -1620,8 +1659,8 @@ const actions = {
   'restore-player': ({ id }) => {
     const p = deletedWithGames().find((x) => x.id === id);
     if (!p) return;
-    store.put('players', { id: p.id, name: p.name, emoji: p.emoji }); // newer than the deletion, so it wins on every phone
-    toast(`↩️ ${p.emoji} ${p.name} is back, with their records`);
+    store.put('players', snap(p)); // newer than the deletion, so it wins on every phone
+    toast(`${p.emoji} ${p.name} is back, with their records`);
     renderView();
   },
   'merge-deleted': ({ id }) => {
@@ -1630,7 +1669,7 @@ const actions = {
     if (!from || !to) return;
     if (!confirm(`Move all of ${from.name}'s games and points to ${to.emoji} ${to.name}?\n\nApplies on every phone and can't be undone.`)) return;
     const n = mergePlayers(id, to.id);
-    toast(`🔗 Merged: ${n} game${n === 1 ? '' : 's'} moved to ${to.name}`);
+    toast(`Merged: ${n} game${n === 1 ? '' : 's'} moved to ${to.name}`);
     renderView();
   },
   'merge-player': ({ id }) => {
@@ -1642,7 +1681,7 @@ const actions = {
     if (!confirm(`Merge ${from.emoji} ${from.name} into ${to.emoji} ${to.name}?\n\nAll of ${from.name}'s games and points move to ${to.name}, and ${from.name} is removed. This applies on every phone and can't be undone.`)) return;
     const n = mergePlayers(id, toId);
     ui.sheet = null;
-    toast(`🔗 Merged: ${n} game${n === 1 ? '' : 's'} moved to ${to.name}`);
+    toast(`Merged: ${n} game${n === 1 ? '' : 's'} moved to ${to.name}`);
     render();
   },
   'live-info': () => { ui.sheet = { type: 'live' }; renderSheet(); },
@@ -1654,19 +1693,19 @@ const actions = {
   'new-invite': async ({ id }) => {
     const c = store.crews().find((x) => x.id === id);
     if (c?.invite && !confirm('Replace the invite code? The old code stops working. Everyone already in the crew stays in.')) return;
-    try { await crewsApi.newInvite(id); toast('✨ New invite code ready'); } catch (e) { toast('⚠️ ' + e.message); }
+    try { await crewsApi.newInvite(id); toast('New invite code ready'); } catch (e) { toast('' + e.message); }
     renderSheet(); renderView();
   },
   'copy-invite': async ({ id }) => {
     const c = store.crews().find((x) => x.id === id);
-    try { await navigator.clipboard.writeText(c.invite); toast('📋 Copied'); } catch { toast('Copy failed: press and hold the code to copy it'); }
+    try { await navigator.clipboard.writeText(c.invite); toast('Copied'); } catch { toast('Copy failed: press and hold the code to copy it'); }
   },
   'share-invite': async ({ id }) => {
     const c = store.crews().find((x) => x.id === id);
     const text = `Join "${c.name}" in Copenhagen Adventure Deck!\n1. Open ${location.origin + location.pathname} in Safari and add it to your home screen.\n2. Open it from the home screen → Settings → Crews → Join a crew.\n3. Paste this code: ${c.invite}`;
     try {
       if (navigator.share) await navigator.share({ text });
-      else { await navigator.clipboard.writeText(text); toast('📋 Invite message copied'); }
+      else { await navigator.clipboard.writeText(text); toast('Invite message copied'); }
     } catch { /* share sheet closed */ }
   },
   'leave-crew': async ({ id }) => {
@@ -1680,7 +1719,7 @@ const actions = {
       if (store.game) return toast('Finish or leave the running game first');
       await switchCrew((store.crews().find((x) => x.id === MAIN && !x.deleted) || store.crews().find((x) => x.local)).id, { quiet: true });
     }
-    store.removeCrew(id); toast(`👋 Left ${c.name} on this phone`); renderView();
+    store.removeCrew(id); toast(`Left ${c.name} on this phone`); renderView();
   },
   'delete-crew': async ({ id, name }) => {
     if (store.game && store.crew().id === id) return toast('Finish the running game in this crew first');
@@ -1689,20 +1728,20 @@ const actions = {
     if (typed.trim().toLowerCase() !== name.trim().toLowerCase()) return toast('The name didn\'t match, so nothing was deleted');
     try {
       await crewsApi.remove(id);
-      toast(`🗑 ${name} deleted`);
+      toast(`${name} deleted`);
       if (ui.sheet?.type === 'server-crews') { ui.sheet.list = ui.sheet.list?.filter((c) => c.id !== id); }
       Object.assign(ui.setup, { playerIds: me() ? [store.crew().meId] : [], guests: [] });
       render();
-    } catch (e) { toast('⚠️ ' + e.message); }
+    } catch (e) { toast('' + e.message); }
   },
   'server-crews': async () => {
     ui.sheet = { type: 'server-crews', list: null }; renderSheet();
-    try { ui.sheet = { type: 'server-crews', list: await crewsApi.list() }; } catch (e) { ui.sheet = null; toast('⚠️ ' + e.message); }
+    try { ui.sheet = { type: 'server-crews', list: await crewsApi.list() }; } catch (e) { ui.sheet = null; toast('' + e.message); }
     renderSheet();
   },
   'add-server-crew': ({ id, name }) => {
     store.addCrew({ id, name, admin: true });
-    ui.sheet = null; toast(`☁️ ${name} added. Switch to it to play`); render();
+    ui.sheet = null; toast(`${name} added. Switch to it to play`); render();
   },
   'forget-admin': () => {
     if (!confirm('Forget the admin key on this phone? Crews you joined with an invite keep working.')) return;
@@ -1778,7 +1817,7 @@ const actions = {
   // Settings
   'sync-now': async () => {
     toast('⟳ Syncing…');
-    try { const r = await sync(); toast(r.changed ? `✓ Synced, ${r.changed} update${r.changed === 1 ? '' : 's'}` : '✓ Up to date'); } catch (e) { toast('⚠️ ' + e.message); }
+    try { const r = await sync(); toast(r.changed ? `✓ Synced, ${r.changed} update${r.changed === 1 ? '' : 's'}` : '✓ Up to date'); } catch (e) { toast('' + e.message); }
     renderView();
   },
   'export': () => {
@@ -1828,8 +1867,8 @@ const changeActions = {
       } else {
         toolState(scope, 'photo').key = key;
       }
-      toast('📷 Photo saved');
-    } catch (e) { toast('⚠️ ' + e.message); }
+      toast('Photo saved');
+    } catch (e) { toast('' + e.message); }
     if (ui.sheet?.type === 'tools') renderSheet(); else renderView();
   },
   'import': async (el) => {
@@ -1839,10 +1878,10 @@ const changeActions = {
       const data = JSON.parse(await file.text());
       if (data.app !== 'adventure-deck') throw new Error('Not an Adventure Deck backup');
       const n = store.merge(data);
-      toast(`⬆️ Imported, ${n} item${n === 1 ? '' : 's'} updated`);
+      toast(`Imported, ${n} item${n === 1 ? '' : 's'} updated`);
       if (n) store.emit();
       renderView();
-    } catch (e) { toast('⚠️ ' + e.message); }
+    } catch (e) { toast('' + e.message); }
   },
 };
 
@@ -1876,7 +1915,7 @@ const formActions = {
     const p = store.get('players', fd.get('id'));
     const name = fd.get('name').trim().slice(0, 24);
     if (!p || !name) return;
-    store.put('players', { ...p, name, emoji: fd.get('emoji') || p.emoji });
+    store.put('players', { ...p, name, color: fd.get('color') || colorFor(p) });
     ui.sheet = null; render();
   },
   'join-crew': async (form) => {
@@ -1884,10 +1923,10 @@ const formActions = {
     if (!code) return;
     try {
       const c = await crewsApi.join(code);
-      toast(`🎉 You're in ${c.name}!`);
+      toast(`You're in ${c.name}!`);
       form.invite.value = '';
       if (!store.game) await switchCrew(c.id, { quiet: true }); else renderView();
-    } catch (e) { toast('⚠️ ' + e.message); }
+    } catch (e) { toast('' + e.message); }
   },
   'create-crew': async (form) => {
     const name = form.name.value.trim();
@@ -1896,9 +1935,9 @@ const formActions = {
       const c = await crewsApi.create(name);
       form.name.value = '';
       ui.sheet = { type: 'invite', id: c.id };
-      toast(`👥 ${c.name} created`);
+      toast(`${c.name} created`);
       render();
-    } catch (e) { toast('⚠️ ' + e.message); }
+    } catch (e) { toast('' + e.message); }
   },
   'admin': async (form) => {
     const url = form.apiUrl.value.trim().replace(/\/+$/, '');
@@ -1910,7 +1949,7 @@ const formActions = {
       // Check the key before keeping it.
       try { await crewsApi.list(); } catch (e) {
         Object.assign(store.settings, before);
-        toast(e.status === 401 ? '⚠️ That admin key is wrong' : '⚠️ ' + e.message);
+        toast(e.status === 401 ? 'That admin key is wrong' : '' + e.message);
         return;
       }
       // The original crew is the owner's: make sure it's on this phone.
@@ -1920,7 +1959,7 @@ const formActions = {
     if (url !== before.apiUrl) for (const c of store.crews()) c.lastPush = 0; // new server: push everything
     store.saveSettings();
     form.adminKey.value = '';
-    toast(key ? '👑 Admin key saved' : 'Saved');
+    toast(key ? 'Admin key saved' : 'Saved');
     renderView();
   },
 };
@@ -1928,10 +1967,10 @@ const formActions = {
 /** Switch the phone to another crew: its own players, records and live games. */
 async function switchCrew(id, { quiet = false } = {}) {
   if (store.game) { toast('Finish or leave the running game first'); return; }
-  try { store.switchCrew(id); } catch (e) { toast('⚠️ ' + e.message); return; }
+  try { store.switchCrew(id); } catch (e) { toast('' + e.message); return; }
   Object.assign(ui.setup, { playerIds: [], guests: [] });
   ui.summaryId = null; ui.sheet = null; ui.joinCode = '';
-  if (!quiet) toast(`👥 Now playing in ${store.crew().name}`);
+  if (!quiet) toast(`Now playing in ${store.crew().name}`);
   render();
   if (canSync()) { try { await sync(); } catch {} }
   if (me()) ui.setup.playerIds = [store.crew().meId];
@@ -1968,7 +2007,7 @@ setInterval(() => {
     const tool = el.dataset.clock, scope = el.dataset.scope;
     if (tickClock(el, toolState(scope, tool))) { finished = true; if (scope === 'game') saveGame(); }
   });
-  if (finished) toast('⏰ Time!');
+  if (finished) toast('Time!');
   // Show "Accept as it stands" once a waiting claim is old enough.
   const cl = store.game?.current?.claim;
   if (cl && ui.tab === 'play' && !ui.sheet && ui.forcedShownFor !== cl.at && claimCanBeForced(store.game)) { ui.forcedShownFor = cl.at; renderView(); }
@@ -2012,7 +2051,7 @@ async function checkForUpdate({ manual = false } = {}) {
       showUpdateBanner(true);
     }
   } catch {
-    if (manual) toast('⚠️ Could not reach the server to check');
+    if (manual) toast('Could not reach the server to check');
   }
   if (ui.tab === 'settings') renderView();
 }
@@ -2030,7 +2069,7 @@ function justTriedUpdating(latest) {
 }
 
 async function applyUpdate() {
-  toast('✨ Updating…');
+  toast('Updating…');
   try { sessionStorage.setItem('cad.updateTry', JSON.stringify({ v: ui.update.latest, at: Date.now() })); } catch {}
   try {
     // 1. Drop the saved offline copy. 2. Fetch every file fresh, which also refreshes the
@@ -2050,7 +2089,7 @@ function showUpdateBanner(show) {
   if (el) return;
   el = document.createElement('div');
   el.id = 'update-banner';
-  el.innerHTML = `✨ Version ${esc(ui.update.latest)} is ready <button class="btn small primary" data-act="apply-update">Update now</button>`;
+  el.innerHTML = `Version ${esc(ui.update.latest)} is ready <button class="btn small primary" data-act="apply-update">Update now</button>`;
   document.body.prepend(el);
 }
 store.onChange(() => renderView());

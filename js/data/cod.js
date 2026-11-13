@@ -9,7 +9,7 @@ export const FORMATS = [
   { id: 'duel',     name: '1v1 Duel',        kind: 'duel',  players: 2,     min: 2, diff: 2, mins: 10, weight: 3, text: 'First to {target} kills wins.', targets: [10, 15, 20] },
   { id: 'ffa',      name: 'Free-for-all',    kind: 'ffa',   players: 'all', min: 3, diff: 2, mins: 10, weight: 3, text: 'Highest score at the end of the match wins.' },
   { id: 'teams',    name: 'Team battle',     kind: 'teams', players: 'all', min: 4, diff: 2, mins: 15, weight: 3, text: 'The winning team scores, every member.' },
-  { id: 'handicap', name: '2 vs 1 Handicap', kind: 'teams', players: 3,     min: 3, diff: 3, mins: 10, weight: 1, text: 'Two against one. Win as the lone wolf and you are a legend (give yourself the 🔥 bonus).' },
+  { id: 'handicap', name: '2 vs 1 Handicap', kind: 'teams', players: 3,     min: 3, diff: 3, mins: 10, weight: 1, text: 'Two against one. Win as the lone wolf and you deserve the Legendary bonus.' },
   { id: 'party',    name: 'Party mode',      kind: 'party', players: 'all', min: 2, diff: 2, mins: 10, weight: 2, text: 'Whoever wins the mode takes the points.', houseRule: false },
   { id: 'coop',     name: 'Co-op survival',  kind: 'coop',  players: 'all', min: 2, diff: 3, mins: 30, weight: 2, text: 'Survive to round/wave {target} together.', targets: [5, 8, 10, 12, 15], houseRule: false },
 ];

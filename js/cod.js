@@ -85,7 +85,7 @@ export function codRound(g, owned = [], rng = Math.random) {
   const name = (id) => g.players.find((p) => p.id === id)?.name || '?';
   const lines = [
     `${game.name} · ${map} · ${mode.name}`,
-    teams ? `🟥 ${teams[0].map(name).join(' & ')} vs 🟦 ${teams[1].map(name).join(' & ')}` : `On screen: ${onScreen.map(name).join(', ')}`,
+    teams ? `Red team: ${teams[0].map(name).join(' & ')} · Blue team: ${teams[1].map(name).join(' & ')}` : `On screen: ${onScreen.map(name).join(', ')}`,
     goal.replace('{target}', target ?? ''),
     rule ? `House rule: ${rule.text}` : '',
     sittingOut.length ? `Sitting out (and refereeing): ${sittingOut.map(name).join(', ')}` : '',

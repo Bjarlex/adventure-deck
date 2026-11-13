@@ -56,7 +56,7 @@ const btn = (scope, tool, op, label, cls = '') => `<button class="btn ${cls}" da
 export function renderTool(tool, st, ctx) {
   const { scope } = ctx;
   const b = (op, label, cls) => btn(scope, tool, op, label, cls);
-  const head = `<div class="tool-head">${TOOLS[tool].icon} ${TOOLS[tool].label}</div>`;
+  const head = `<div class="tool-head">${TOOLS[tool].label}</div>`;
   let body = '';
   switch (tool) {
     case 'timer': {
@@ -76,16 +76,16 @@ export function renderTool(tool, st, ctx) {
       if (!st.cells) Object.assign(st, { cells: shuffled(BINGO_SOUNDS).slice(0, 16), marked: [] });
       const lines = bingoLines(st.marked);
       body = `<div class="bingo">${st.cells.map((c, i) => `<button class="bingo-cell ${st.marked.includes(i) ? 'on' : ''}" data-act="tool" data-scope="${scope}" data-tool="bingo" data-op="mark:${i}">${esc(c)}</button>`).join('')}</div>
-        ${lines ? `<div class="banner win">🔔 BINGO! ${lines} line${lines > 1 ? 's' : ''}</div>` : ''}
+        ${lines ? `<div class="banner win">BINGO! ${lines} line${lines > 1 ? 's' : ''}</div>` : ''}
         <div class="row">${b('new', 'New card')}</div>`;
       break;
     }
     case 'station':
-      body = `${st.value ? `<div class="big-result">🚆 ${esc(st.value)}</div>` : '<p class="muted">Spin to pick a station.</p>'}
+      body = `${st.value ? `<div class="big-result">${esc(st.value)}</div>` : '<p class="muted">Spin to pick a station.</p>'}
         <div class="row">${b('roll', st.value ? 'Spin again' : 'Spin', 'primary')}</div>`;
       break;
     case 'compass': {
-      const arrow = st.deg != null ? `<div class="arrow" style="transform:rotate(${st.deg}deg)">⬆</div><div class="big-result">Head ${esc(st.label)}</div>` : '<p class="muted">Pick a random direction, or follow the wind.</p>';
+      const arrow = st.deg != null ? `<div class="arrow" style="transform:rotate(${st.deg}deg)"><svg viewBox="0 0 24 24" width="64" height="64" aria-hidden="true"><path d="M12 2l7 19-7-4.5L5 21z" fill="currentColor"/></svg></div><div class="big-result">Head ${esc(st.label)}</div>` : '<p class="muted">Pick a random direction, or follow the wind.</p>';
       body = `${arrow}${st.note ? `<p class="muted small">${esc(st.note)}</p>` : ''}
         <div class="row">${b('random', 'Random direction', 'primary')}${b('wind', 'Wind at your back')}</div>`;
       break;
@@ -96,29 +96,29 @@ export function renderTool(tool, st, ctx) {
         ${st.table ? `<div class="tarot small">${TAROT.map(([o, m]) => `<div><b>${esc(o)}</b><span>${esc(m)}</span></div>`).join('')}</div>` : ''}`;
       break;
     case 'song':
-      body = `${st.value ? `<div class="big-result">🎬 ${esc(st.value)}</div>` : ''}<div class="row">${b('roll', st.value ? 'Another scene' : 'Draw a scene', 'primary')}</div>`;
+      body = `${st.value ? `<div class="big-result">${esc(st.value)}</div>` : ''}<div class="row">${b('roll', st.value ? 'Another scene' : 'Draw a scene', 'primary')}</div>`;
       break;
     case 'topic':
-      body = `${st.value ? `<div class="big-result">💬 ${esc(st.value)}</div>` : ''}<div class="row">${b('roll', st.value ? 'Another topic' : 'Draw a topic', 'primary')}</div>`;
+      body = `${st.value ? `<div class="big-result">${esc(st.value)}</div>` : ''}<div class="row">${b('roll', st.value ? 'Another topic' : 'Draw a topic', 'primary')}</div>`;
       break;
     case 'letter':
       body = `${st.value ? `<div class="big-result huge">${esc(st.value)}</div>` : ''}<div class="row">${b('roll', st.value ? 'Another letter' : 'Draw a letter', 'primary')}</div>`;
       break;
     case 'coin':
-      body = `${st.value ? `<div class="big-result">${st.value === 'Heads' ? '🙂 Heads (left)' : '🔁 Tails (right)'}</div>` : ''}<div class="row">${b('roll', 'Flip', 'primary')}</div>`;
+      body = `${st.value ? `<div class="big-result">${st.value === 'Heads' ? 'Heads: go left' : 'Tails: go right'}</div>` : ''}<div class="row">${b('roll', 'Flip', 'primary')}</div>`;
       break;
     case 'dice':
-      body = `${st.value ? `<div class="big-result huge">${'⚀⚁⚂⚃⚄⚅'[st.value - 1]} ${st.value}</div>` : ''}<div class="row">${b('roll', 'Roll', 'primary')}</div>`;
+      body = `${st.value ? `<div class="big-result huge">${st.value}</div>` : ''}<div class="row">${b('roll', 'Roll', 'primary')}</div>`;
       break;
     case 'picker': {
       const ps = ctx.players || [];
       body = ps.length < 2 ? '<p class="muted">Needs a game with 2 or more players.</p>'
-        : `${st.value ? `<div class="big-result">👉 ${esc(st.value)}</div>` : ''}<div class="row">${b('roll', 'Pick someone', 'primary')}</div>`;
+        : `${st.value ? `<div class="big-result">${esc(st.value)}</div>` : ''}<div class="row">${b('roll', 'Pick someone', 'primary')}</div>`;
       break;
     }
     case 'photo':
       body = `<div class="photo-slot" data-photo-slot="${scope}">${st.key ? '<p class="muted small">Loading photo…</p>' : ''}</div>
-        <label class="btn primary file-btn">📷 ${st.key ? 'Retake' : 'Take photo'}<input type="file" accept="image/*" capture="environment" data-act-change="photo" data-scope="${scope}" hidden></label>
+        <label class="btn primary file-btn">${st.key ? 'Retake' : 'Take photo'}<input type="file" accept="image/*" capture="environment" data-act-change="photo" data-scope="${scope}" hidden></label>
         <p class="muted small">Photos stay on this phone and show up in the game history.</p>`;
       break;
   }
