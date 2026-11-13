@@ -13,7 +13,7 @@ import { store, uid, sync, syncConfigured, scheduleSync, photos, compressImage }
 import { renderTool, toolOp, tickClock, fmtClock } from './tools.js';
 import { live, normaliseCode } from './live.js';
 
-const VERSION = '2.1.0';
+const VERSION = '2.1.1';
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const EMOJIS = ['🦊', '🐻', '🐼', '🐸', '🦁', '🐯', '🐨', '🐵', '🦄', '🐙', '🦉', '🐧', '🐳', '🦖', '🐝', '🦀', '🐢', '🦩', '🐺', '🦦', '🐲', '🦔', '🐞', '🦜'];
@@ -303,11 +303,11 @@ function viewCurrentCard(g, card, stats, turnP) {
   const canCheckin = dist != null && dist <= CHECKIN_RADIUS;
   const others = g.players.filter((p) => p.id !== turnP.id);
 
-  let pickers = '';
-  if (card.who === 'duo') pickers = `<p class="pick-label">Partner</p><div class="chips">${others.map((p) => chip(pname(p), cur.partners.includes(p.id), 'pick-partner', { id: p.id })).join('')}</div>`;
-  if (card.who === 'versus') pickers = `<p class="pick-label">Winner(s)</p><div class="chips">${g.players.map((p) => chip(pname(p), cur.winners.includes(p.id), 'pick-winner', { id: p.id })).join('')}</div>`;
-  if (card.who === 'group') pickers = '<p class="pick-label">Everyone scores 🙌</p>';
   const needsPick = (card.who === 'duo' && !cur.partners.length) || (card.who === 'versus' && !cur.winners.length);
+  let pickers = '';
+  if (card.who === 'duo') pickers = `<div class="picker ${needsPick ? 'needed' : ''}"><p class="pick-label">👥 Who was your partner?</p><div class="chips">${others.map((p) => chip(pname(p), cur.partners.includes(p.id), 'pick-partner', { id: p.id })).join('')}</div></div>`;
+  if (card.who === 'versus') pickers = `<div class="picker ${needsPick ? 'needed' : ''}"><p class="pick-label">⚔️ Who won? <small class="muted">Tap one or more</small></p><div class="chips">${g.players.map((p) => chip(pname(p), cur.winners.includes(p.id), 'pick-winner', { id: p.id })).join('')}</div></div>`;
+  if (card.who === 'group') pickers = '<p class="pick-label">🙌 Everyone scores</p>';
 
   return `
   <p class="turn-label">${pname(turnP)}'s card</p>
@@ -333,11 +333,10 @@ function viewCurrentCard(g, card, stats, turnP) {
     ${pickers}
     <label class="switch-row"><input type="checkbox" data-act-change="bonus" ${cur.bonus ? 'checked' : ''}> <span>🔥 Legendary (+25%)</span></label>
     <div class="resolve-btns">
-      <button class="btn ok big" data-act="resolve-done" ${needsPick ? 'disabled' : ''}>✅ Done <small>+${pts}</small></button>
+      <button class="btn ok big ${needsPick ? 'waiting' : ''}" data-act="resolve-done">✅ Done <small>${needsPick ? (card.who === 'duo' ? 'pick a partner first' : 'pick the winner first') : `+${pts}`}</small></button>
       <button class="btn" data-act="resolve-fail">😅 Failed <small>0</small></button>
       <button class="btn bad" data-act="open-reject">🙅 Reject <small>${rc.free ? 'free veto' : `−${rc.cost}`}</small></button>
     </div>
-    ${needsPick ? `<p class="muted small">Pick ${card.who === 'duo' ? 'a partner' : 'the winner(s)'} to complete.</p>` : ''}
   </section>`;
 }
 
@@ -833,6 +832,7 @@ async function resolve(type, how) {
     const entry = { ts: Date.now(), cardId: card.id, title: card.title, pid: p.id, type, awards: {}, place: !!card.place, offered: cur.penance || null, photo: cur.tools.photo?.key || null };
     if (type === 'done') {
       const ids = card.who === 'solo' ? [p.id] : card.who === 'duo' ? [p.id, ...cur.partners] : card.who === 'group' ? g.players.map((x) => x.id) : cur.winners;
+      if (!ids.length || (card.who === 'duo' && ids.length < 2)) return false; // nobody picked: nothing to score
       const pts = completionPoints(card, g.rules, { bonus: cur.bonus, checkin: cur.checkin });
       for (const id of ids) entry.awards[id] = pts;
       Object.assign(entry, { bonus: cur.bonus, checkin: cur.checkin });
@@ -1029,7 +1029,21 @@ const actions = {
     if (ok) toast(`📍 Checked in! +${CHECKIN_BONUS}`);
     renderView();
   },
-  'resolve-done': () => resolve('done'),
+  'resolve-done': () => {
+    const cur = store.game?.current, card = cur && cardById(cur.cardId);
+    const missing = card && ((card.who === 'versus' && !cur.winners.length) || (card.who === 'duo' && !cur.partners.length));
+    if (missing) {
+      // Don't silently ignore the tap: say what's needed and point at it.
+      toast(card.who === 'versus' ? '⚔️ Tap who won first' : '👥 Tap your partner first');
+      const picker = $('.picker');
+      if (picker) {
+        picker.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        picker.classList.remove('nudge'); void picker.offsetWidth; picker.classList.add('nudge');
+      }
+      return;
+    }
+    resolve('done');
+  },
   'resolve-fail': () => resolve('fail'),
   'open-reject': () => { ui.sheet = { type: 'reject' }; renderSheet(); },
   'reject': ({ how }) => resolve('reject', how),

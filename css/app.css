@@ -151,6 +151,12 @@ body.busy [data-act] { opacity: .7; }
 .place-box .row { margin-top: 6px; }
 
 .resolve .pick-label { font-weight: 700; margin: 0 0 4px; }
+.picker { border-radius: 12px; padding: 8px; margin: -8px -8px 4px; border: 2px solid transparent; }
+.picker.needed { border-color: var(--ochre); background: color-mix(in srgb, var(--ochre) 10%, transparent); }
+.picker.nudge { animation: nudge .5s ease-in-out 2; }
+@keyframes nudge { 0%, 100% { transform: none; } 25% { transform: translateX(-6px); } 75% { transform: translateX(6px); } }
+.btn.waiting { filter: saturate(.45); }
+.btn.waiting small { font-weight: 600; }
 .resolve-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
 .resolve-btns .ok { grid-column: 1 / -1; }
 .near-list { list-style: none; margin: 0; padding: 0; }
