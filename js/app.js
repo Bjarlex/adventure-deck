@@ -14,7 +14,7 @@ import { store, uid, sync, syncConfigured, scheduleSync, photos, compressImage }
 import { renderTool, toolOp, tickClock, fmtClock } from './tools.js';
 import { live, normaliseCode } from './live.js';
 
-const VERSION = '2.2.0';
+const VERSION = '2.2.1';
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const EMOJIS = ['🦊', '🐻', '🐼', '🐸', '🦁', '🐯', '🐨', '🐵', '🦄', '🐙', '🦉', '🐧', '🐳', '🦖', '🐝', '🦀', '🐢', '🦩', '🐺', '🦦', '🐲', '🦔', '🐞', '🦜'];
@@ -480,12 +480,12 @@ function viewRecords() {
   let body = '';
   if (v === 'leaders') {
     const sort = SORTS[ui.records.sort];
-    const rows = leaderboard(games, store.list('players')).sort((a, b) => sort.val(b) - sort.val(a));
+    const rows = leaderboard(games, store.list('players'), deletedIds()).sort((a, b) => sort.val(b) - sort.val(a));
     body = `<div class="chips scroll">${Object.entries(SORTS).map(([k, s]) => chip(s.label, ui.records.sort === k, 'rec-sort', { v: k })).join('')}</div>
       ${rows.length ? `<ol class="board">${rows.map((r) => `<li class="${isMe(r.id) ? 'me' : ''}"><span class="em">${esc(r.emoji)}</span><div><b>${esc(r.name)}${isMe(r.id) ? ' <small class="you">you</small>' : ''}</b><small>${r.games} game${r.games === 1 ? '' : 's'} · ${r.wins} win${r.wins === 1 ? '' : 's'} · best ${r.best ?? 0}</small></div><span class="val">${sort.val(r)}</span></li>`).join('')}</ol>`
         : '<p class="muted center">No finished games yet. Go play!</p>'}`;
   } else if (v === 'high') {
-    const top = topScores(games, 15);
+    const top = topScores(games, 15, deletedIds());
     body = top.length ? `<ol class="board">${top.map((r) => `<li class="${isMe(r.id) ? 'me' : ''}"><span class="em">${esc(r.emoji)}</span><div><b>${esc(r.name)}</b><small>${esc(r.modeName)} · ${r.nPlayers} players · ${fmtDate(r.endedAt)}</small></div><span class="val">${r.score}</span></li>`).join('')}</ol>`
       : '<p class="muted center">No scores yet.</p>';
   } else if (v === 'history') {
@@ -500,7 +500,18 @@ function viewRecords() {
     body = `${dups.map((grp) => `<div class="banner soft">⚠️ ${grp.length} players called "${esc(grp[0].name)}". Open the one you don't want and use <b>Merge into…</b></div>`).join('')}
       <ul class="players">${ps.map((p) => `<li class="${isMe(p.id) ? 'me' : ''}"><span class="em">${esc(p.emoji)}</span><b>${esc(p.name)}${isMe(p.id) ? ' <small class="you">you</small>' : ''}<small class="muted"> ${counts[p.id] || 0} game${counts[p.id] === 1 ? '' : 's'}</small></b><button class="btn small" data-act="edit-player" data-id="${p.id}">Edit</button></li>`).join('')}</ul>
       <form class="inline-add" data-form="add-player"><input name="name" placeholder="New crew player" maxlength="24" autocomplete="off"><button class="btn" name="as" value="crew">＋ Crew</button></form>
-      <p class="muted small">Guests (added on the Play screen) aren't listed here and don't count on the leaderboard.</p>`;
+      <p class="muted small">Guests (added on the Play screen) aren't listed here and don't count on the leaderboard.</p>
+      ${deletedWithGames().length ? `
+      <h3>Deleted players</h3>
+      <p class="muted small">Hidden from the leaderboard and highscores. Their games stay in History. Restore them, or merge their points into someone who is still in the crew.</p>
+      <ul class="players deleted">${deletedWithGames().map((p) => `<li>
+        <span class="em">${esc(p.emoji)}</span><b>${esc(p.name)}<small class="muted"> ${p.games} game${p.games === 1 ? '' : 's'}</small></b>
+        <div class="row">
+          <button class="btn small" data-act="restore-player" data-id="${p.id}">↩️ Restore</button>
+          ${ps.length ? `<select id="merge-deleted-${p.id}">${ps.map((o) => `<option value="${o.id}">${esc(o.emoji)} ${esc(o.name)}${similarNames(o.name, p.name) ? ' (same name?)' : ''}</option>`).join('')}</select>
+          <button class="btn small" data-act="merge-deleted" data-id="${p.id}">Merge</button>` : ''}
+        </div>
+      </li>`).join('')}</ul>` : ''}`;
   }
   return `<header class="page-head"><h1>Records</h1>${syncConfigured() ? '<button class="btn small" data-act="sync-now">⟳ Sync</button>' : ''}</header>
     <div class="seg-tabs">${tabs.map(([k, l]) => `<button class="${v === k ? 'on' : ''}" data-act="rec-view" data-v="${k}">${l}</button>`).join('')}</div>
@@ -646,6 +657,22 @@ function sheetLive() {
     <div class="col"><button class="btn" data-act="close-sheet">Close</button></div>`;
 }
 
+/** Players deleted from the crew list (tombstones). They're hidden from the leaderboards. */
+const deletedIds = () => new Set(Object.values(store.data.players).filter((p) => p.deleted).map((p) => p.id));
+
+/** Deleted players that still have games, with their name and emoji from their latest game. */
+function deletedWithGames() {
+  const gone = deletedIds();
+  const found = {};
+  for (const g of store.list('games').sort((a, b) => a.endedAt - b.endedAt)) {
+    for (const p of g.players) {
+      if (!gone.has(p.id)) continue;
+      found[p.id] = { id: p.id, name: p.name, emoji: p.emoji, games: (found[p.id]?.games || 0) + 1 };
+    }
+  }
+  return Object.values(found).sort((a, b) => a.name.localeCompare(b.name));
+}
+
 function gamesPerPlayer() {
   const n = {};
   for (const g of store.list('games')) for (const p of g.players) n[p.id] = (n[p.id] || 0) + 1;
@@ -676,7 +703,7 @@ function sheetPlayer(p) {
     </div>` : ''}
     <h3>Delete</h3>
     <div class="row"><button class="btn bad small" data-act="delete-player" data-id="${p.id}">Delete ${esc(p.name)}</button></div>
-    <p class="muted small">${nGames ? 'Their past games stay in the records under the old name. To combine them with someone else, use Merge instead.' : 'They have no games yet, so nothing else changes.'}</p>`;
+    <p class="muted small">${nGames ? 'They disappear from the leaderboard; their games stay in History and they can be restored later. To combine them with someone else, use Merge instead.' : 'They have no games yet, so nothing else changes.'}</p>`;
 }
 
 // ── Tool state ──────────────────────────────────────────────────────────────
@@ -1178,6 +1205,22 @@ const actions = {
     render();
   },
   'remove-guest': ({ id }) => { ui.setup.guests = ui.setup.guests.filter((g) => g.id !== id); renderView(); },
+  'restore-player': ({ id }) => {
+    const p = deletedWithGames().find((x) => x.id === id);
+    if (!p) return;
+    store.put('players', { id: p.id, name: p.name, emoji: p.emoji }); // newer than the deletion, so it wins on every phone
+    toast(`↩️ ${p.emoji} ${p.name} is back, with their records`);
+    renderView();
+  },
+  'merge-deleted': ({ id }) => {
+    const from = deletedWithGames().find((x) => x.id === id);
+    const to = store.get('players', $(`#merge-deleted-${id}`)?.value);
+    if (!from || !to) return;
+    if (!confirm(`Move all of ${from.name}'s games and points to ${to.emoji} ${to.name}?\n\nApplies on every phone and can't be undone.`)) return;
+    const n = mergePlayers(id, to.id);
+    toast(`🔗 Merged: ${n} game${n === 1 ? '' : 's'} moved to ${to.name}`);
+    renderView();
+  },
   'merge-player': ({ id }) => {
     const from = store.get('players', id);
     const toId = $('#merge-target')?.value;
@@ -1250,7 +1293,7 @@ const actions = {
     const p = store.get('players', id);
     const n = gamesPerPlayer()[id] || 0;
     const msg = n
-      ? `${p?.name} has ${n} game${n === 1 ? '' : 's'} in the records.\n\nIf they're a duplicate of someone, Cancel and use "Merge into" instead.\n\nDelete anyway? (Their games stay under the old name.)`
+      ? `${p?.name} has ${n} game${n === 1 ? '' : 's'} in the records.\n\nIf they're a duplicate of someone, Cancel and use "Merge into" instead.\n\nDelete anyway? They disappear from the leaderboard; their games stay in History, and you can restore them later.`
       : `Delete ${p?.name} for everyone in the crew?`;
     if (!confirm(msg)) return;
     store.remove('players', id);

@@ -362,13 +362,13 @@ export function mergePlayerInGame(game, fromId, to) {
   return g;
 }
 
-/** All-time leaderboard from finished games (guests left out). */
-export function leaderboard(games, players) {
+/** All-time leaderboard from finished games. Guests and deleted players (ids in `hidden`) are left out. */
+export function leaderboard(games, players, hidden = new Set()) {
   const rows = {};
   const ensure = (p) => (rows[p.id] ??= { id: p.id, name: p.name, emoji: p.emoji, games: 0, wins: 0, points: 0, best: null, done: 0, rejected: 0, penances: 0, places: 0 });
   for (const g of games) {
     for (const p of g.players) {
-      if (isGuest(p)) continue;
+      if (isGuest(p) || hidden.has(p.id)) continue;
       const r = ensure(p);
       r.games++;
       r.points += p.score;
@@ -385,9 +385,9 @@ export function leaderboard(games, players) {
   return Object.values(rows);
 }
 
-export function topScores(games, n = 10) {
+export function topScores(games, n = 10, hidden = new Set()) {
   return games
-    .flatMap((g) => g.players.filter((p) => !isGuest(p)).map((p) => ({ ...p, gameId: g.id, modeName: g.modeName, endedAt: g.endedAt, nPlayers: g.players.length })))
+    .flatMap((g) => g.players.filter((p) => !isGuest(p) && !hidden.has(p.id)).map((p) => ({ ...p, gameId: g.id, modeName: g.modeName, endedAt: g.endedAt, nPlayers: g.players.length })))
     .sort((a, b) => b.score - a.score || a.endedAt - b.endedAt)
     .slice(0, n);
 }

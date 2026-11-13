@@ -183,6 +183,13 @@ test('guests are recognised and left out of records', () => {
   eq(R.leaderboard(games, []).map((r) => r.id), ['p_a']);
   eq(R.topScores(games).map((r) => r.id), ['p_a']);
 });
+test('deleted players are hidden from the leaderboard and highscores', () => {
+  const games = [{ id: 'g', endedAt: 1, winnerIds: ['p_gone'], players: [{ id: 'p_gone', name: 'Old', score: 99 }, { id: 'p_a', name: 'A', score: 10 }] }];
+  const hidden = new Set(['p_gone']);
+  eq(R.leaderboard(games, [], hidden).map((r) => r.id), ['p_a']);
+  eq(R.topScores(games, 10, hidden).map((r) => r.id), ['p_a']);
+  eq(R.leaderboard(games, []).length, 2, 'without the hidden set nothing changes');
+});
 test('merging a duplicate rewrites players, winners, log and awards', () => {
   const game = { id: 'g1', winnerIds: ['p_dup'], players: [{ id: 'p_dup', name: 'Raf', emoji: '🐸', score: 30, done: 2 }, { id: 'p_b', name: 'Bo', emoji: '🐼', score: 10, done: 1 }],
     log: [{ pid: 'p_dup', type: 'done', awards: { p_dup: 20 } }, { pid: 'p_b', type: 'done', awards: { p_b: 10, p_dup: 10 } }] };

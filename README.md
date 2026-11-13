@@ -88,7 +88,7 @@ Sync happens automatically when the app opens, after a game ends and when cards 
 - **⭐ This is me:** each phone picks its own player once (on the Play screen, or in Settings). It's then picked automatically, says "Your turn!" in live games, offers "Join as …" when you open a game you're not in, and is highlighted in the records. Only this phone knows; it isn't synced.
 - **No duplicates:** before adding a crew player, the app pulls the latest list from the server. Exactly the same name reuses the existing player, and a similar one ("Raf" vs "Rafael", "Bjarek" vs "Bjarke") asks "Did you mean…?".
 - **Guests** are for one game only: they play and score and appear in that game's history, but they never join the crew list, the leaderboard or the highscores.
-- **Merge:** if a duplicate slips through anyway, Records → Players warns about it. Open the extra one → **Merge into…**. Their games, points and wins move over on every phone. Deleting a player who has games suggests merging instead.
+- **Merge:** if a duplicate slips through anyway, Records → Players warns about it. Open the extra one → **Merge into…**. Their games, points and wins move over on every phone. Deleting a player hides them from the leaderboard and highscores (their games stay in History). Deleted players with games are listed under Records → Players, where you can restore them or merge their points into someone else.
 
 Free-plan limits: KV allows 1,000 writes a day. The Worker only writes when something actually changed, so a crew uses a handful a day.
 

@@ -91,6 +91,9 @@ a { color: var(--teal); }
 .score.me .nm { font-weight: 800; }
 .board li.me, .players li.me { border: 2px solid var(--ochre); }
 .you { background: var(--ochre); color: #1d2733; border-radius: 999px; padding: 1px 7px; font-size: .7rem; font-weight: 800; vertical-align: middle; }
+.players.deleted li { flex-wrap: wrap; opacity: .85; border-style: dashed; }
+.players.deleted .row { width: 100%; margin-top: 4px; }
+.players.deleted select { flex: 1; min-width: 0; font: inherit; font-size: 16px; padding: 6px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); }
 .inline-add select { flex: 1; font: inherit; font-size: 16px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); min-width: 0; }
 
 /* ── Setup ──────────────────────────────────────── */
