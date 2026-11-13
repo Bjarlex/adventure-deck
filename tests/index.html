@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deck tests</title>
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 16px; }
+  .pass { color: #2e8b57; } .fail { color: #c8473b; font-weight: 700; }
+  #summary { font-size: 18px; font-weight: 700; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+<div id="summary">Running…</div>
+<ol id="out"></ol>
+<script type="module">
+import { DEFAULT_CARDS } from '../js/data/cards.js';
+import { PLACES, placeById } from '../js/data/places.js';
+import { PENANCES } from '../js/data/lists.js';
+import * as R from '../js/rules.js';
+import worker from '../worker/worker.js';
+
+const results = [];
+function test(name, fn) { try { fn(); results.push([name, true]); } catch (e) { results.push([name, false, e.message]); } }
+async function atest(name, fn) { try { await fn(); results.push([name, true]); } catch (e) { results.push([name, false, e.message]); } }
+function eq(a, b, msg = '') { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(`${msg} expected ${JSON.stringify(b)}, got ${JSON.stringify(a)}`); }
+function ok(v, msg) { if (!v) throw new Error(msg || 'not ok'); }
+const seq = (...xs) => { let i = 0; return () => xs[i++ % xs.length]; };
+
+const cards = DEFAULT_CARDS.map((c) => R.normalizeCard(c));
+const P = (id) => ({ id, name: id, emoji: '🙂' });
+const game = (extra = {}) => ({ players: [P('a'), P('b'), P('c')], log: [], used: [], filter: {}, rules: { freeVetoes: 1, penanceChance: 0.4, mult: 1 }, range: 1000, ...extra });
+
+// ── Deck data ──
+test('card ids are unique', () => eq(new Set(DEFAULT_CARDS.map((c) => c.id)).size, DEFAULT_CARDS.length));
+test('every card is valid after normalising', () => {
+  for (const c of DEFAULT_CARDS) {
+    ok(R.DIFF[c.diff], `${c.id} diff`); ok(R.WHO[c.who], `${c.id} who`);
+    for (const t of c.tags) ok(R.TAGS[t], `${c.id} unknown tag ${t}`);
+    if (c.tool) ok(R.TOOLS[c.tool], `${c.id} unknown tool ${c.tool}`);
+    if (c.tool === 'timer') ok(c.secs > 0, `${c.id} timer without secs`);
+    if (c.place) ok(placeById[c.place], `${c.id} unknown place ${c.place}`);
+  }
+});
+test('place ids are unique and inside Copenhagen', () => {
+  eq(new Set(PLACES.map((p) => p.id)).size, PLACES.length);
+  for (const p of PLACES) ok(p.lat > 55.6 && p.lat < 55.75 && p.lng > 12.45 && p.lng < 12.7, p.id);
+});
+test('every mode has at least 15 cards (crew mode excepted)', () => {
+  for (const m of R.MODES) {
+    if (m.filter.customOnly) continue;
+    const n = cards.filter((c) => !c.place && R.matchesFilter(c, m.filter)).length;
+    ok(n >= 15, `${m.id} has only ${n}`);
+  }
+});
+
+// ── Geography ──
+test('Nyhavn to Rådhuspladsen is roughly 1.4 km', () => {
+  const d = R.distanceM(placeById.nyhavn, placeById.radhuspladsen);
+  ok(d > 1200 && d < 1600, `got ${d}`);
+});
+test('bearing from Rådhuspladsen to Nyhavn is east-ish', () => {
+  eq(R.compassLabel(R.bearingDeg(placeById.radhuspladsen, placeById.nyhavn)), 'E');
+});
+
+// ── Scoring ──
+test('points by difficulty, multiplier and spot bonus', () => {
+  eq(R.cardPoints({ diff: 1 }), 10);
+  eq(R.cardPoints({ diff: 3 }, { mult: 1.5 }), 53);
+  eq(R.cardPoints({ diff: 2, place: 'nyhavn' }), 30);
+});
+test('completion with style bonus and check-in', () => {
+  eq(R.completionPoints({ diff: 2, place: 'nyhavn' }, {}, { bonus: true, checkin: true }), 30 + 8 + 5);
+});
+test('first rejection uses the free veto', () => {
+  eq(R.rejectCost({ diff: 2 }, { freeVetoes: 1 }, R.blankStats()), { cost: 0, free: true });
+});
+test('paid rejections cost half, escalating by 5', () => {
+  const s = { ...R.blankStats(), freeUsed: 1, paidRejects: 0 };
+  eq(R.rejectCost({ diff: 3 }, { freeVetoes: 1 }, s), { cost: 18, free: false });
+  eq(R.rejectCost({ diff: 3 }, { freeVetoes: 1 }, { ...s, paidRejects: 2 }), { cost: 28, free: false });
+});
+test('penance reduces the loss but never to a gain', () => {
+  eq(R.costAfterPenance(18, 1), 9);
+  eq(R.costAfterPenance(18, 2), 5);
+  eq(R.costAfterPenance(0, 2), 0);
+});
+test('penance offer follows the mode chance', () => {
+  eq(R.rollPenance({ penanceChance: 0 }, PENANCES, () => 0), null);
+  ok(R.rollPenance({ penanceChance: 1 }, PENANCES, () => 0.99));
+  eq(R.rollPenance({ penanceChance: 0.4 }, PENANCES, () => 0.5), null);
+});
+test('stats are derived from the log', () => {
+  const g = game({ log: [
+    { pid: 'a', type: 'done', awards: { a: 20, b: 20 }, place: true },
+    { pid: 'b', type: 'reject', awards: {}, free: true },
+    { pid: 'c', type: 'reject', awards: { c: -9 }, free: false, penance: { level: 1 } },
+    { pid: 'a', type: 'fail', awards: {} },
+    { pid: 'b', type: 'done', awards: { b: 13 }, bonus: true },
+  ] });
+  const s = R.playerStats(g);
+  eq([s.a.score, s.a.done, s.a.failed, s.a.places], [20, 1, 1, 1]);
+  eq([s.b.score, s.b.done, s.b.freeUsed, s.b.bonuses], [33, 2, 1, 1]);
+  eq([s.c.score, s.c.paidRejects, s.c.penances, s.c.rejected], [-9, 1, 1, 1]);
+});
+test('rounds and time limits end the game', () => {
+  eq(R.isOver(game({ rules: { rounds: 2 }, log: new Array(5).fill({}) })), false);
+  eq(R.isOver(game({ rules: { rounds: 2 }, log: new Array(6).fill({}) })), 'rounds');
+  eq(R.isOver(game({ rules: { minutes: 60 }, startedAt: 0 }), 3600001), 'time');
+});
+test('ties give multiple winners', () => eq(R.winnersOf([{ id: 'a', score: 5 }, { id: 'b', score: 5 }, { id: 'c', score: 1 }]), ['a', 'b']));
+
+// ── Dealing ──
+test('location cards only within range', () => {
+  const here = placeById.nyhavn;
+  const e = R.eligibleCards(cards, game(), here);
+  ok(e.some((c) => c.id === 'p001'), 'Nyhavn card missing at Nyhavn');
+  ok(!e.some((c) => c.id === 'p039'), 'CopenHill (2 km away) should not be eligible');
+  ok(!R.eligibleCards(cards, game(), null).some((c) => c.place), 'no location cards without GPS');
+  for (const c of e.filter((c) => c.place)) ok(R.distanceM(here, R.resolvePlace(c)) <= 1000, c.id);
+});
+test('completed cards never come back; reshuffle after the pool runs dry', () => {
+  const g = game({ filter: { anyTags: ['transit'] } });
+  const pool = R.eligibleCards(cards, g, null);
+  g.log = [{ type: 'done', cardId: pool[0].id, pid: 'a', awards: {} }];
+  g.used = pool.map((c) => c.id);
+  const r = R.drawCard(cards, g, null);
+  ok(r.reshuffled, 'should reshuffle');
+  ok(r.card.id !== pool[0].id, 'completed card came back');
+});
+test('a single player never gets duo or versus cards', () => {
+  const e = R.eligibleCards(cards, game({ players: [P('a')] }), null);
+  ok(e.length > 30 && e.every((c) => c.who === 'solo' || c.who === 'group'));
+});
+test('explorer bias picks nearby cards', () => {
+  const g = game({ rules: { placeBias: 0.7 } });
+  const r = R.drawCard(cards, g, placeById.nyhavn, seq(0.1, 0.0));
+  ok(r.card.place, 'expected a location card');
+});
+test('crew-only mode only deals custom cards', () => {
+  const custom = R.normalizeCard({ id: 'c_x', title: 'X', text: 'y', diff: 1, who: 'solo' }, true);
+  const e = R.eligibleCards([...cards, custom], game({ filter: { customOnly: true } }), null);
+  eq(e.map((c) => c.id), ['c_x']);
+});
+test('switched-off cards are not active', () => {
+  const act = R.activeCards(DEFAULT_CARDS, [], { g001: { id: 'g001', off: true } });
+  ok(!act.some((c) => c.id === 'g001'));
+  eq(act.length, DEFAULT_CARDS.length - 1);
+});
+
+// ── Records ──
+test('leaderboard and top scores', () => {
+  const games = [
+    { id: 'g1', endedAt: 1, modeName: 'Classic', winnerIds: ['a'], players: [{ ...P('a'), score: 50, done: 3 }, { ...P('b'), score: 20, done: 1 }] },
+    { id: 'g2', endedAt: 2, modeName: 'Classic', winnerIds: ['b'], players: [{ ...P('a'), score: 10, done: 1 }, { ...P('b'), score: 70, done: 4 }] },
+  ];
+  const lb = Object.fromEntries(R.leaderboard(games, []).map((r) => [r.id, r]));
+  eq([lb.a.points, lb.a.wins, lb.a.best, lb.a.games], [60, 1, 50, 2]);
+  eq([lb.b.points, lb.b.wins, lb.b.best], [90, 1, 70]);
+  eq(R.topScores(games, 2).map((r) => r.score), [70, 50]);
+});
+
+// ── Worker ──
+function mockKV() {
+  const m = new Map(); let writes = 0;
+  return { get: async (k, t) => (m.has(k) ? (t === 'json' ? JSON.parse(m.get(k)) : m.get(k)) : null), put: async (k, v) => { writes++; m.set(k, v); }, writes: () => writes };
+}
+const env = () => ({ DECK: mockKV(), CREW_KEY: 'secret-key', ALLOWED_ORIGIN: 'https://friend.github.io' });
+// Browsers forbid setting the Origin header on a real Request, so use a request-shaped object
+// (standalone Headers allow it). The Worker only uses method, url, headers and text().
+const fakeReq = (url, { method = 'GET', headers = {}, body } = {}) => ({ method, url, headers: new Headers(headers), text: async () => body ?? '' });
+const call = (e, body, { key = 'secret-key', origin = 'https://friend.github.io', method = 'POST' } = {}) =>
+  worker.fetch(fakeReq('https://deck.example.workers.dev/api/sync', { method, headers: { 'content-type': 'application/json', 'x-crew-key': key, origin }, body: method === 'POST' ? JSON.stringify(body) : undefined }), e);
+
+await atest('worker rejects a wrong key', async () => { const r = await call(env(), {}, { key: 'nope' }); eq(r.status, 401); });
+await atest('worker rejects another origin', async () => { const r = await call(env(), {}, { origin: 'https://evil.example' }); eq(r.status, 403); });
+await atest('worker answers CORS preflight', async () => {
+  const r = await worker.fetch(fakeReq('https://x/api/sync', { method: 'OPTIONS', headers: { origin: 'https://friend.github.io' } }), env());
+  eq(r.status, 204); eq(r.headers.get('access-control-allow-origin'), 'https://friend.github.io');
+});
+await atest('worker explains missing config', async () => { const r = await call({ CREW_KEY: 'k' }, {}, { key: 'k' }); eq(r.status, 500); ok((await r.json()).error.includes('DECK')); });
+await atest('worker merges: newest wins, older ignored, writes only on change', async () => {
+  const e = env();
+  let r = await call(e, { players: [{ id: 'p_1', name: 'Ann', updatedAt: 100 }] });
+  eq(r.status, 200);
+  r = await call(e, { players: [{ id: 'p_1', name: 'Old Ann', updatedAt: 50 }, { id: 'p_2', name: 'Bo', updatedAt: 60 }] });
+  let doc = await r.json();
+  eq(doc.players.map((p) => p.name).sort(), ['Ann', 'Bo']);
+  r = await call(e, { players: [{ id: 'p_1', name: 'Anna', updatedAt: 200 }] });
+  doc = await r.json();
+  eq(doc.players.find((p) => p.id === 'p_1').name, 'Anna');
+  const before = e.DECK.writes();
+  await call(e, { players: [{ id: 'p_1', name: 'Anna', updatedAt: 200 }] });
+  eq(e.DECK.writes(), before, 'no-op sync should not write');
+  r = await call(e, null, { method: 'GET' });
+  eq((await r.json()).players.length, 2);
+});
+await atest('worker drops malformed items', async () => {
+  const e = env();
+  const r = await call(e, { cards: [{ id: '../bad id', updatedAt: 1 }, { id: 'c_ok', updatedAt: 'x' }, { id: 'c_future', updatedAt: Date.now() + 9e9 }, { id: 'c_good', updatedAt: 1 }], games: 'nope' });
+  eq((await r.json()).cards.map((c) => c.id), ['c_good']);
+});
+
+// ── Report ──
+const failed = results.filter((r) => !r[1]);
+document.getElementById('summary').innerHTML = failed.length ? `<span class="fail">${failed.length} of ${results.length} failed</span>` : `<span class="pass">All ${results.length} tests passed</span>`;
+document.getElementById('out').innerHTML = results.map(([n, p, m]) => `<li class="${p ? 'pass' : 'fail'}">${p ? '✓' : '✗'} ${n}${m ? ` — ${m}` : ''}</li>`).join('');
+window.__testResults = { total: results.length, failed: failed.map((f) => f[0] + ': ' + f[2]) };
+</script>
+</body>
+</html>

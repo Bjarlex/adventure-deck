@@ -1,0 +1,47 @@
+// Copenhagen spots used by location cards.
+// Coordinates are approximate (to ~50 m), which is plenty for a 500–1000 m challenge radius.
+// To add a spot: give it a unique id, then reference that id from a card's `place` field.
+
+export const PLACES = [
+  { id: 'nyhavn',            name: 'Nyhavn',                     lat: 55.6798, lng: 12.5907 },
+  { id: 'radhuspladsen',     name: 'Rådhuspladsen',              lat: 55.6757, lng: 12.5692 },
+  { id: 'amagertorv',        name: 'Amagertorv (Strøget)',       lat: 55.6786, lng: 12.5791 },
+  { id: 'gammelstrand',      name: 'Gammel Strand',              lat: 55.6777, lng: 12.5787 },
+  { id: 'kongensnytorv',     name: 'Kongens Nytorv',             lat: 55.6806, lng: 12.5856 },
+  { id: 'rundetaarn',        name: 'Rundetårn',                  lat: 55.6813, lng: 12.5757 },
+  { id: 'kongenshave',       name: 'Kongens Have / Rosenborg',   lat: 55.6855, lng: 12.5785 },
+  { id: 'torvehallerne',     name: 'Torvehallerne',              lat: 55.6837, lng: 12.5696 },
+  { id: 'noerreport',        name: 'Nørreport Station',          lat: 55.6833, lng: 12.5713 },
+  { id: 'botanisk',          name: 'Botanisk Have',              lat: 55.6870, lng: 12.5738 },
+  { id: 'assistens',         name: 'Assistens Kirkegård',        lat: 55.6906, lng: 12.5494 },
+  { id: 'dronninglouisesbro', name: 'Dronning Louises Bro',      lat: 55.6865, lng: 12.5634 },
+  { id: 'peblingesoe',       name: 'Søerne (Peblinge Sø)',       lat: 55.6826, lng: 12.5612 },
+  { id: 'sankthanstorv',     name: 'Sankt Hans Torv',            lat: 55.6925, lng: 12.5600 },
+  { id: 'jaegersborggade',   name: 'Jægersborggade',             lat: 55.6935, lng: 12.5447 },
+  { id: 'superkilen',        name: 'Superkilen',                 lat: 55.7000, lng: 12.5421 },
+  { id: 'faelledparken',     name: 'Fælledparken',               lat: 55.7010, lng: 12.5700 },
+  { id: 'mermaid',           name: 'Den Lille Havfrue',          lat: 55.6929, lng: 12.5993 },
+  { id: 'kastellet',         name: 'Kastellet',                  lat: 55.6913, lng: 12.5950 },
+  { id: 'amalienborg',       name: 'Amalienborg',                lat: 55.6840, lng: 12.5931 },
+  { id: 'marmorkirken',      name: 'Marmorkirken',               lat: 55.6852, lng: 12.5890 },
+  { id: 'operaen',           name: 'Operaen',                    lat: 55.6819, lng: 12.6009 },
+  { id: 'inderhavnsbroen',   name: 'Inderhavnsbroen',            lat: 55.6787, lng: 12.5936 },
+  { id: 'christiania',       name: 'Christiania',                lat: 55.6734, lng: 12.5992 },
+  { id: 'vorfrelser',        name: 'Vor Frelsers Kirke',         lat: 55.6727, lng: 12.5942 },
+  { id: 'christianshavn',    name: 'Christianshavns Kanal',      lat: 55.6740, lng: 12.5915 },
+  { id: 'cirkelbroen',       name: 'Cirkelbroen',                lat: 55.6727, lng: 12.5806 },
+  { id: 'blackdiamond',      name: 'Den Sorte Diamant',          lat: 55.6734, lng: 12.5826 },
+  { id: 'christiansborg',    name: 'Christiansborg',             lat: 55.6761, lng: 12.5802 },
+  { id: 'glyptoteket',       name: 'Glyptoteket',                lat: 55.6727, lng: 12.5720 },
+  { id: 'tivoli',            name: 'Tivoli (main gate)',         lat: 55.6745, lng: 12.5666 },
+  { id: 'kodbyen',           name: 'Kødbyen',                    lat: 55.6685, lng: 12.5605 },
+  { id: 'islandsbrygge',     name: 'Islands Brygge Havnebad',    lat: 55.6697, lng: 12.5773 },
+  { id: 'kalvebodbolge',     name: 'Kalvebod Bølge',             lat: 55.6690, lng: 12.5717 },
+  { id: 'carlsberg',         name: 'Elefantporten (Carlsberg)',  lat: 55.6672, lng: 12.5332 },
+  { id: 'frederiksberghave', name: 'Frederiksberg Have',         lat: 55.6744, lng: 12.5262 },
+  { id: 'reffen',            name: 'Reffen',                     lat: 55.6936, lng: 12.6105 },
+  { id: 'copenhill',         name: 'CopenHill',                  lat: 55.6826, lng: 12.6213 },
+  { id: 'amagerstrand',      name: 'Amager Strandpark',          lat: 55.6553, lng: 12.6480 },
+];
+
+export const placeById = Object.fromEntries(PLACES.map((p) => [p.id, p]));
