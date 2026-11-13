@@ -30,7 +30,71 @@ export const TAGS = {
   water:     { label: 'Harbour',   icon: '🌊' },
   transit:   { label: 'Transit',   icon: '🚇' },
   chill:     { label: 'Chill',     icon: '😌' },
+  indoor:    { label: 'Indoors',   icon: '🏠' },
 };
+
+// ── When a card can be played ───────────────────────────────────────────────
+// A card's optional `needs` list; it is only dealt when all of them hold right now.
+export const NEEDS = {
+  summer:   { label: 'Summer (May–Sep)',         icon: '☀️' },
+  winter:   { label: 'Winter (Nov–Mar)',         icon: '❄️' },
+  xmas:     { label: 'Christmas (15 Nov–Dec)',   icon: '🎄' },
+  daylight: { label: 'Daylight',                 icon: '🌤️' },
+  dark:     { label: 'After dark',               icon: '🌙' },
+  daytime:  { label: 'Opening hours (10–17)',    icon: '🕙' },
+  dry:      { label: 'Not raining',              icon: '🌂' },
+  rain:     { label: 'Raining',                  icon: '🌧️' },
+};
+const CPH = { lat: 55.68, lng: 12.57 };
+
+/** Sunrise and sunset for a date and place (the SunCalc algorithm; accurate to a minute or two). */
+export function sunTimes(date, lat = CPH.lat, lng = CPH.lng) {
+  const rad = Math.PI / 180, dayMs = 86400000, J1970 = 2440588, J2000 = 2451545, J0 = 0.0009, e = rad * 23.4397;
+  const fromJulian = (j) => new Date((j + 0.5 - J1970) * dayMs);
+  const d = date.valueOf() / dayMs - 0.5 + J1970 - J2000;
+  const lw = rad * -lng, phi = rad * lat;
+  const n = Math.round(d - J0 - lw / (2 * Math.PI));
+  const ds = J0 + lw / (2 * Math.PI) + n;
+  const M = rad * (357.5291 + 0.98560028 * ds);
+  const L = M + rad * (1.9148 * Math.sin(M) + 0.02 * Math.sin(2 * M) + 0.0003 * Math.sin(3 * M)) + rad * 102.9372 + Math.PI;
+  const dec = Math.asin(Math.sin(0) * Math.cos(e) + Math.cos(0) * Math.sin(e) * Math.sin(L));
+  const Jnoon = J2000 + ds + 0.0053 * Math.sin(M) - 0.0069 * Math.sin(2 * L);
+  const w = Math.acos((Math.sin(rad * -0.833) - Math.sin(phi) * Math.sin(dec)) / (Math.cos(phi) * Math.cos(dec)));
+  const a = J0 + (w + lw) / (2 * Math.PI) + n;
+  const Jset = J2000 + a + 0.0053 * Math.sin(M) - 0.0069 * Math.sin(2 * L);
+  return { rise: fromJulian(Jnoon - (Jset - Jnoon)), set: fromJulian(Jset) };
+}
+
+/**
+ * What's true right now. `weather` ({isDay, raining, temp}) comes from the weather service
+ * and may be null (offline): then daylight is calculated and rain is unknown.
+ */
+export function currentConditions(now = new Date(), weather = null) {
+  const month = now.getMonth() + 1, day = now.getDate(), hour = now.getHours();
+  const sun = sunTimes(now);
+  const isDay = typeof weather?.isDay === 'boolean' ? weather.isDay : now >= sun.rise && now < sun.set;
+  return {
+    summer: month >= 5 && month <= 9,
+    winter: month >= 11 || month <= 3,
+    xmas: (month === 11 && day >= 15) || month === 12,
+    daylight: isDay,
+    dark: !isDay,
+    daytime: hour >= 10 && hour < 17,
+    raining: typeof weather?.raining === 'boolean' ? weather.raining : null, // null = unknown
+    temp: weather?.temp ?? null,
+    sunset: sun.set,
+  };
+}
+
+/** Can this card be played under these conditions? Unknown weather never blocks a card. */
+export function fitsConditions(card, cond) {
+  if (!cond) return true;
+  return (card.needs || []).every((n) => {
+    if (n === 'dry') return cond.raining !== true;
+    if (n === 'rain') return cond.raining === true;
+    return cond[n] === true;
+  });
+}
 
 export const TOOLS = {
   timer:     { label: 'Timer',          icon: '⏱️' },
@@ -92,6 +156,7 @@ export function normalizeCard(c, custom = false) {
     tool: TOOLS[c.tool] ? c.tool : null,
     secs: c.tool === 'timer' ? clamp(Number(c.secs) || 60, 5, 7200) : null,
     place: c.place || null,
+    needs: (Array.isArray(c.needs) ? c.needs : []).filter((n) => NEEDS[n]),
     custom: custom || !!c.custom,
     author: c.author || null,
   };
@@ -161,20 +226,24 @@ function placeOk(card, game, here) {
   return distanceM(here, p) <= game.range;
 }
 
-/** Cards that may still be dealt in this game (ignoring which ones were already drawn). */
-export function eligibleCards(cards, game, here) {
+/**
+ * Cards that may still be dealt in this game (ignoring which ones were already drawn).
+ * `cond` (from currentConditions) holds back cards that don't fit the season, light or weather.
+ */
+export function eligibleCards(cards, game, here, cond = null) {
   const done = new Set(game.log.filter((e) => e.type === 'done').map((e) => e.cardId));
   const solo = game.players.length < 2;
   return cards.filter((c) => !done.has(c.id)
     && matchesFilter(c, game.filter)
     && !(solo && (c.who === 'duo' || c.who === 'versus'))
+    && fitsConditions(c, cond)
     && placeOk(c, game, here));
 }
 
 /** Location cards in range, nearest first. */
-export function nearbyCards(cards, game, here) {
+export function nearbyCards(cards, game, here, cond = null) {
   if (!here) return [];
-  return eligibleCards(cards, game, here)
+  return eligibleCards(cards, game, here, cond)
     .filter((c) => c.place)
     .map((c) => ({ card: c, dist: distanceM(here, resolvePlace(c)) }))
     .sort((a, b) => a.dist - b.dist);
@@ -192,8 +261,8 @@ function pickWeighted(list, weightFn, rng) {
  * Cards already drawn are skipped until the eligible pool runs dry, then the deck reshuffles
  * (completed cards never come back within a game).
  */
-export function drawCard(cards, game, here, rng = Math.random) {
-  const elig = eligibleCards(cards, game, here);
+export function drawCard(cards, game, here, rng = Math.random, cond = null) {
+  const elig = eligibleCards(cards, game, here, cond);
   if (!elig.length) return null;
   const used = new Set(game.used);
   let pool = elig.filter((c) => !used.has(c.id));
@@ -204,7 +273,9 @@ export function drawCard(cards, game, here, rng = Math.random) {
   if (game.rules.placeBias && near.length && rng() < game.rules.placeBias) {
     card = near[Math.floor(rng() * near.length)];
   } else {
-    card = pickWeighted(pool, (c) => (c.place ? 2 : 1), rng); // spots you can walk to are twice as likely
+    // Spots you can walk to are twice as likely; so are indoor cards while it rains.
+    const raining = cond?.raining === true;
+    card = pickWeighted(pool, (c) => (c.place ? 2 : 1) * (raining && c.tags.includes('indoor') ? 2 : 1), rng);
   }
   return { card, reshuffled };
 }

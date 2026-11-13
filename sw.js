@@ -5,7 +5,7 @@
 const CACHE = 'adventure-deck';
 const SHELL = [
   './', './index.html', './manifest.webmanifest', './css/app.css',
-  './js/app.js', './js/version.js', './js/config.js', './js/rules.js', './js/store.js', './js/tools.js', './js/live.js',
+  './js/app.js', './js/version.js', './js/config.js', './js/rules.js', './js/store.js', './js/tools.js', './js/live.js', './js/weather.js',
   './js/data/cards.js', './js/data/places.js', './js/data/lists.js',
   './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png',
 ];

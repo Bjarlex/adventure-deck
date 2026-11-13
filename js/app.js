@@ -5,7 +5,7 @@ import { PLACES } from './data/places.js';
 import { PENANCES } from './data/lists.js';
 import {
   DIFF, WHO, TAGS, TOOLS, MODES, modeById, PLACE_BONUS, CHECKIN_BONUS, CHECKIN_RADIUS, PENANCE_KEEP,
-  activeCards, normalizeCard, resolvePlace, cardPoints, eligibleCards, nearbyCards, drawCard, rollPenance,
+  activeCards, normalizeCard, NEEDS, currentConditions, resolvePlace, cardPoints, eligibleCards, nearbyCards, drawCard, rollPenance,
   playerStats, rejectCost, costAfterPenance, completionPoints, currentRound, isOver, winnersOf, awardsFor,
   leaderboard, topScores, distanceM, bearingDeg, compassLabel, fmtDistance,
   nameKey, isGuest, similarNames, duplicateGroups, mergePlayerInGame,
@@ -14,6 +14,7 @@ import { store, uid, sync, syncConfigured, scheduleSync, photos, compressImage, 
 import { DEFAULT_SERVER } from './config.js';
 import { renderTool, toolOp, tickClock, fmtClock } from './tools.js';
 import { live, normaliseCode } from './live.js';
+import { getWeather, lastWeather } from './weather.js';
 
 import { VERSION } from './version.js';
 const $ = (s, el = document) => el.querySelector(s);
@@ -63,7 +64,37 @@ function badges(c) {
     + `<span class="badge">⏱ ${c.mins} min</span>`
     + (c.place ? '<span class="badge place">📍 Spot</span>' : '')
     + (c.tool ? `<span class="badge">${TOOLS[c.tool].icon}</span>` : '')
+    + (c.needs || []).map((n) => `<span class="badge when" title="${esc(NEEDS[n].label)}">${NEEDS[n].icon} ${esc(NEEDS[n].label.replace(/ \(.*\)/, ''))}</span>`).join('')
     + (c.custom ? '<span class="badge crew">✍️ Crew</span>' : '');
+}
+
+// ── Season, light and weather ───────────────────────────────────────────────
+/** Conditions to deal by right now, or null when the crew switched matching off. */
+function conditions() {
+  if (store.settings.matchConditions === false) return null;
+  return currentConditions(new Date(), lastWeather());
+}
+
+function conditionsLine(cond = currentConditions(new Date(), lastWeather())) {
+  const parts = [];
+  if (cond.xmas) parts.push('🎄 Christmas season');
+  else if (cond.winter) parts.push('❄️ Winter');
+  else if (cond.summer) parts.push('☀️ Summer');
+  const sunset = cond.sunset.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  parts.push(cond.dark ? '🌙 Dark' : `🌤️ Light until ${sunset}`);
+  if (cond.raining === true) parts.push('🌧️ Raining');
+  else if (cond.raining === false) parts.push('🌂 Dry');
+  if (cond.temp != null) parts.push(`${cond.temp}°C`);
+  return parts.join(' · ');
+}
+
+let weatherAsked = 0;
+async function refreshWeather() {
+  if (Date.now() - weatherAsked < 5 * 60000) return;
+  weatherAsked = Date.now();
+  const before = JSON.stringify(lastWeather());
+  await getWeather();
+  if (JSON.stringify(lastWeather()) !== before && ui.tab === 'play' && !ui.sheet) renderView();
 }
 const tagLine = (c) => c.tags.map((t) => `<span class="tag">${TAGS[t].icon} ${TAGS[t].label}</span>`).join('');
 const pname = (p) => `${esc(p.emoji)} ${esc(p.name)}`;
@@ -151,7 +182,8 @@ function viewSetup() {
   s.playerIds = s.playerIds.filter((id) => store.get('players', id));
   const mode = modeById[s.modeId];
   const draft = setupGameDraft();
-  const pool = eligibleCards(allCards(), { ...draft, players: draft.players.length ? draft.players : [{}, {}] }, s.useLocation ? ui.here : null);
+  const pool = eligibleCards(allCards(), { ...draft, players: draft.players.length ? draft.players : [{}, {}] }, s.useLocation ? ui.here : null, conditions());
+  const heldBack = conditions() ? eligibleCards(allCards(), { ...draft, players: draft.players.length ? draft.players : [{}, {}] }, s.useLocation ? ui.here : null).length - pool.length : 0;
   const nearCount = pool.filter((c) => c.place).length;
   const c = s.custom;
 
@@ -239,6 +271,15 @@ function viewSetup() {
   </section>
 
   <section class="panel">
+    <h2>🌦️ Right now</h2>
+    <p>${conditionsLine()}</p>
+    <label class="switch-row"><input type="checkbox" data-act-change="match-conditions" ${store.settings.matchConditions !== false ? 'checked' : ''}> <span>Only deal cards that fit the season, daylight and weather</span></label>
+    <p class="muted small">${store.settings.matchConditions !== false
+      ? (heldBack > 0 ? `${heldBack} card${heldBack === 1 ? ' is' : 's are'} held back for now: they need another season, time of day or weather.` : 'Every card fits right now.') + (lastWeather()?.raining ? ' Indoor cards come up twice as often while it rains.' : '')
+      : 'Off: any card can come up, also beach cards in a snowstorm.'}</p>
+  </section>
+
+  <section class="panel">
     <h2>📡 Live on every phone</h2>
     ${syncConfigured()
       ? `<label class="switch-row"><input type="checkbox" data-act-change="setup-live" ${s.live ? 'checked' : ''}> <span>Share this game live. Friends join with a code, and anyone can draw and score.</span></label>`
@@ -301,10 +342,11 @@ function viewGame() {
 
 function viewDrawArea(g, turnP) {
   const here = g.useLocation ? ui.here : null;
-  const near = g.useLocation ? nearbyCards(allCards(), g, here) : [];
+  const near = g.useLocation ? nearbyCards(allCards(), g, here, conditions()) : [];
   return `
   <div class="draw-area">
     <p class="turn-label ${isMe(turnP.id) ? 'mine' : ''}">${isMe(turnP.id) ? `🎯 Your turn, ${esc(turnP.name)}!` : `${pname(turnP)}'s turn`}</p>
+    ${conditions() ? `<p class="muted small cond-line">${conditionsLine()}</p>` : ''}
     <button class="deck-btn" data-act="draw"><span>🃏</span>Draw a card</button>
     <button class="btn ghost" data-act="skip-turn">Skip to next player</button>
   </div>
@@ -451,6 +493,7 @@ function cardEditor(draft) {
     <fieldset><legend>Who does it</legend><div class="seg">${Object.entries(WHO).map(([k, w]) => `<label><input type="radio" name="who" value="${k}" ${draft.who === k ? 'checked' : ''}><span>${w.icon} ${w.label}</span></label>`).join('')}</div></fieldset>
     <label>Roughly how many minutes<input name="mins" type="number" min="1" max="240" inputmode="numeric" value="${draft.mins}"></label>
     <fieldset><legend>Tags</legend><div class="seg wrap">${Object.entries(TAGS).map(([k, t]) => `<label><input type="checkbox" name="tags" value="${k}" ${draft.tags.includes(k) ? 'checked' : ''}><span>${t.icon} ${t.label}</span></label>`).join('')}</div></fieldset>
+    <fieldset><legend>Only when… <small class="muted">(leave empty for any time)</small></legend><div class="seg wrap">${Object.entries(NEEDS).map(([k, n]) => `<label><input type="checkbox" name="needs" value="${k}" ${(draft.needs || []).includes(k) ? 'checked' : ''}><span>${n.icon} ${n.label}</span></label>`).join('')}</div></fieldset>
     <label>Built-in tool<select name="tool"><option value="">None</option>${Object.entries(TOOLS).map(([k, t]) => `<option value="${k}" ${draft.tool === k ? 'selected' : ''}>${t.icon} ${t.label}</option>`).join('')}</select></label>
     <label>Timer seconds (if the tool is Timer)<input name="secs" type="number" min="5" max="7200" inputmode="numeric" value="${draft.secs || 60}"></label>
     <label>Location<select name="place">
@@ -1131,7 +1174,7 @@ async function saveCardForm(form) {
   const card = normalizeCard({
     id: fd.get('id') || uid('c_'), title: fd.get('title').trim(), text: fd.get('text').trim(),
     diff: Number(fd.get('diff')), mins: Number(fd.get('mins')), who: fd.get('who'), tags: fd.getAll('tags'),
-    tool, secs: Number(fd.get('secs')), place, author: fd.get('author') || null,
+    tool, secs: Number(fd.get('secs')), place, author: fd.get('author') || null, needs: fd.getAll('needs'),
   }, true);
   if (!card.title || !card.text) { toast('A card needs a title and a challenge'); return; }
   store.put('cards', card);
@@ -1214,7 +1257,7 @@ const actions = {
     let none = false, reshuffled = false;
     await mutate((g) => {
       if (g.current) return false; // someone already drew
-      const res = drawCard(allCards(), g, g.useLocation ? ui.here : null);
+      const res = drawCard(allCards(), g, g.useLocation ? ui.here : null, Math.random, conditions());
       if (!res) { none = true; return false; }
       applyDeal(g, res.card, res.reshuffled);
       reshuffled = res.reshuffled;
@@ -1425,7 +1468,7 @@ const actions = {
     store.put('toggles', { id, off: !(t && t.off && !t.deleted) });
     $('#card-list').innerHTML = cardListHTML();
   },
-  'new-card': () => { ui.sheet = { type: 'card', draft: { title: '', text: '', diff: 1, mins: 10, who: 'solo', tags: [], tool: null, secs: 60, place: null, author: null } }; renderSheet(); },
+  'new-card': () => { ui.sheet = { type: 'card', draft: { title: '', text: '', diff: 1, mins: 10, who: 'solo', tags: [], tool: null, secs: 60, place: null, author: null, needs: [] } }; renderSheet(); },
   'edit-card': ({ id }) => { const c = store.get('cards', id); if (c) { ui.sheet = { type: 'card', draft: normalizeCard(c, true) }; renderSheet(); } },
   'copy-card': ({ id }) => {
     const c = cardById(id);
@@ -1475,6 +1518,7 @@ const actions = {
 const changeActions = {
   'setup-location': (el) => { ui.setup.useLocation = el.checked; if (el.checked) startGeo(); renderView(); },
   'setup-live': (el) => { ui.setup.live = el.checked; renderView(); },
+  'match-conditions': (el) => { store.settings.matchConditions = el.checked; store.saveSettings(); renderView(); },
   'set-me-select': (el) => {
     if (el.value) return actions['set-me']({ id: el.value });
     store.crew().meId = ''; store.saveSettings(); toast('This phone no longer knows who you are'); renderView();
@@ -1653,6 +1697,7 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
   autoSync();
   pollLive(); // catch up on a live game straight away after the phone was locked
+  refreshWeather();
   checkForUpdate(); // iPhones resume home-screen apps without reloading them
 });
 
@@ -1684,7 +1729,7 @@ async function checkForUpdate({ manual = false } = {}) {
 
 // Every file of the app (keep in step with SHELL in sw.js).
 const APP_FILES = ['./', './index.html', './manifest.webmanifest', './css/app.css', './js/app.js', './js/version.js', './js/config.js',
-  './js/rules.js', './js/store.js', './js/tools.js', './js/live.js', './js/data/cards.js', './js/data/places.js', './js/data/lists.js'];
+  './js/rules.js', './js/store.js', './js/tools.js', './js/live.js', './js/weather.js', './js/data/cards.js', './js/data/places.js', './js/data/lists.js'];
 
 /** Did we already try to update to this version a moment ago? Then don't reload again (no loops). */
 function justTriedUpdating(latest) {
@@ -1733,6 +1778,8 @@ render();
 autoSync();
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('./sw.js').catch(() => {});
 checkForUpdate();
+refreshWeather();
+setInterval(() => { if (!document.hidden) refreshWeather(); }, 15 * 60000);
 
 // For tests and debugging in the console.
 window.__deck = { store, ui, render };

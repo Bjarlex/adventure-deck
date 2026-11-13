@@ -2,11 +2,12 @@
 
 A challenge card game for walking around Copenhagen with friends. Install it on your phone's home screen. It works offline, and it can share players, highscores and your own cards between your phones.
 
-Version 2.5. The original Koder version is in `v1-original/`.
+Version 2.6. The original Koder version is in `v1-original/`.
 
 ## What's in it
 
-- **162 cards**: the 18 originals (merged and fixed) plus about 140 new ones. 40 of them are **location cards** tied to Copenhagen spots, and they are only dealt when you're within range (500–1000 m, set in Settings).
+- **229 cards**: the 18 originals (merged and fixed) plus about 210 new ones. 85 of them are **location cards** at 75 Copenhagen spots (Indre By, Christianshavn, Nørrebro, Nordvest, Vesterbro, Frederiksberg, Valby, Islands Brygge, Amager and Sydhavn), only dealt when you're within range (500–1000 m, set in Settings).
+- **Season, daylight and weather**: cards can say when they work (summer, winter, Christmas, daylight, after dark, opening hours, dry, raining). The deck only deals what fits right now, using the calendar, a sunset calculation and live weather for central Copenhagen from Open-Meteo. While it rains, indoor cards come up twice as often. Can be switched off on the Play screen.
 - **Players, points and turns**: a scoreboard, a podium and awards at the end (🎯 Closer, 🐔 Chicken, 🦾 Iron, 🧭 Explorer, 🔥 Legend).
 - **Rejections and penances**: see Scoring below.
 - **8 game modes**: Classic, Quick walk, Explorer, Bar crawl, Sweat, Chill, Crew cards, and Custom (pick tags, length, difficulty and rules yourself).
@@ -126,7 +127,7 @@ To play: when starting a game, keep **📡 Share this game live** on. The code a
 ## Editing content
 
 - **Cards:** `js/data/cards.js` (field reference at the top). Or use the in-app card builder: those cards sync and don't need a code change.
-- **Spots:** `js/data/places.js`. Coordinates are approximate (about ±50 m), which is fine for a 500–1000 m radius. Fix any that are off.
+- **Spots:** `js/data/places.js`. Coordinates were checked against OpenStreetMap; for long streets, big areas and gates the point is where the card happens. If one is off on a walk, fix it there.
 - **Penances, bingo sounds, debate topics, tarot, stations:** `js/data/lists.js`.
 - **Rules and modes:** `js/rules.js`.
 - If you add or remove a file, update `SHELL` in `sw.js` and `APP_FILES` in `js/app.js`.

@@ -74,6 +74,8 @@ a { color: var(--teal); }
 .badge.place { border-color: var(--teal); color: var(--teal); }
 .badge.crew { border-color: var(--ochre); color: var(--ochre); }
 .badge.ok { background: var(--green); color: #fff; border-color: transparent; }
+.badge.when { border-style: dashed; border-color: var(--navy); }
+.cond-line { text-align: center; margin: -2px 0 6px; }
 .badges, .tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
 .tag { font-size: .78rem; color: var(--muted); }
 

@@ -53,6 +53,71 @@ test('every mode has at least 15 cards (crew mode excepted)', () => {
   }
 });
 
+test('every card condition is known, and every spot is used by a card', () => {
+  for (const c of DEFAULT_CARDS) for (const n of c.needs || []) ok(R.NEEDS[n], `${c.id} unknown need ${n}`);
+  const used = new Set(DEFAULT_CARDS.map((c) => c.place).filter(Boolean));
+  const unused = PLACES.filter((p) => !used.has(p.id) && p.id !== 'noerreport').map((p) => p.id);
+  eq(unused, [], 'spots without a card');
+});
+test('your areas now have location cards nearby', () => {
+  const located = cards.filter((c) => c.place);
+  const near = ([lat, lng]) => located.filter((c) => R.distanceM({ lat, lng }, R.resolvePlace(c)) <= 1000).length;
+  for (const [hood, ll] of Object.entries({ Nørrebro: [55.6925, 12.5560], Vesterbro: [55.6703, 12.5560], Frederiksberg: [55.6786, 12.5321], 'Islands Brygge': [55.6640, 12.5780], Sydhavn: [55.6480, 12.5420] })) {
+    ok(near(ll) >= 4, `${hood} has only ${near(ll)}`);
+  }
+});
+
+// ── Season, light and weather ──
+const cphDate = (iso) => new Date(iso);
+test('sunrise and sunset for Copenhagen are right within ~10 minutes', () => {
+  const mins = (d) => d.getUTCHours() * 60 + d.getUTCMinutes();
+  const nov = R.sunTimes(cphDate('2026-11-13T12:00:00Z'));
+  ok(Math.abs(mins(nov.rise) - (6 * 60 + 49)) <= 10, `Nov sunrise ${nov.rise.toISOString()}`);  // ~07:49 local
+  ok(Math.abs(mins(nov.set) - (15 * 60 + 4)) <= 10, `Nov sunset ${nov.set.toISOString()}`);     // ~16:04 local
+  const jun = R.sunTimes(cphDate('2026-06-21T12:00:00Z'));
+  ok(Math.abs(mins(jun.rise) - (2 * 60 + 25)) <= 10, `Jun sunrise ${jun.rise.toISOString()}`);  // ~04:25 local
+  ok(Math.abs(mins(jun.set) - (19 * 60 + 58)) <= 10, `Jun sunset ${jun.set.toISOString()}`);    // ~21:58 local
+});
+test('conditions follow the calendar, the sun and the weather', () => {
+  const winterNight = R.currentConditions(cphDate('2026-12-03T20:00:00Z'), null);
+  eq([winterNight.winter, winterNight.xmas, winterNight.summer, winterNight.dark, winterNight.raining], [true, true, false, true, null]);
+  const summerDay = R.currentConditions(cphDate('2026-07-10T10:00:00Z'), { isDay: true, raining: false, temp: 22 });
+  eq([summerDay.summer, summerDay.winter, summerDay.daylight, summerDay.raining, summerDay.temp], [true, false, true, false, 22]);
+  eq(R.currentConditions(cphDate('2026-11-10T10:00:00Z')).xmas, false, 'Christmas starts 15 Nov');
+});
+test('cards are held back unless they fit', () => {
+  const card = (needs) => R.normalizeCard({ id: 'x', title: 'x', text: 'x', needs });
+  const rainyNight = { summer: false, winter: true, xmas: false, daylight: false, dark: true, daytime: false, raining: true };
+  ok(R.fitsConditions(card([]), rainyNight));
+  ok(!R.fitsConditions(card(['dry']), rainyNight));
+  ok(R.fitsConditions(card(['rain', 'dark']), rainyNight));
+  ok(!R.fitsConditions(card(['summer']), rainyNight));
+  ok(R.fitsConditions(card(['dry']), { ...rainyNight, raining: null }), 'unknown weather never blocks');
+  ok(!R.fitsConditions(card(['rain']), { ...rainyNight, raining: null }), 'rain cards need known rain');
+  ok(R.fitsConditions(card(['summer']), null), 'matching switched off');
+  eq(card(['nonsense', 'dark']).needs, ['dark']);
+});
+test('a rainy winter night deals no summer or daylight cards, but rain and dark ones', () => {
+  const rainyNight = { summer: false, winter: true, xmas: true, daylight: false, dark: true, daytime: false, raining: true };
+  const pool = R.eligibleCards(cards, game(), null, rainyNight);
+  ok(!pool.some((c) => c.needs.includes('summer') || c.needs.includes('daylight') || c.needs.includes('dry')));
+  ok(pool.some((c) => c.id === 'g139') && pool.some((c) => c.id === 'g131') && pool.some((c) => c.id === 'g123'), 'rain, Christmas and dark cards available');
+  const sunnySummer = { summer: true, winter: false, xmas: false, daylight: true, dark: false, daytime: true, raining: false };
+  const pool2 = R.eligibleCards(cards, game(), null, sunnySummer);
+  ok(!pool2.some((c) => ['g139', 'g131', 'g123'].includes(c.id)), 'no rain, Christmas or dark cards on a summer day');
+  ok(pool2.length > 110, `summer pool ${pool2.length}`); // general cards only: no GPS here
+});
+test('indoor cards are twice as likely when it rains', () => {
+  const g = game({ filter: {} });
+  const rainy = { summer: false, winter: true, xmas: false, daylight: true, dark: false, daytime: true, raining: true };
+  const pool = R.eligibleCards(cards, g, null, rainy);
+  const share = pool.filter((c) => c.tags.includes('indoor')).length / pool.length;
+  let indoor = 0; let seed = 1; const rng = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  for (let i = 0; i < 4000; i++) if (R.drawCard(cards, g, null, rng, rainy).card.tags.includes('indoor')) indoor++;
+  const drawn = indoor / 4000;
+  ok(drawn > share * 1.6 && drawn < share * 2.4, `indoor share ${share.toFixed(2)}, drawn ${drawn.toFixed(2)}`);
+});
+
 // ── Geography ──
 test('Nyhavn to Rådhuspladsen is roughly 1.4 km', () => {
   const d = R.distanceM(placeById.nyhavn, placeById.radhuspladsen);
